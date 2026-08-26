@@ -19,7 +19,6 @@ export/
 exports/
 
 # Export presets contain absolute paths and, if you ever add signing, credentials.
-# Uncomment if this becomes a shared repo:
  export_presets.cfg
 
 # Editor / OS noise
