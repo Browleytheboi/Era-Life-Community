@@ -1,0 +1,35 @@
+# Godot 4 import cache and editor state.
+# Regenerated automatically whenever the project is opened, so it should never be
+# committed: ~7MB across 45 files, and it churns on every import.
+.godot/
+*.translation
+
+# Exported builds. These are outputs, not sources -- exporting produces a new pair
+# every time and they are large binaries.
+*.exe
+*.pck
+*.zip
+*.dmg
+*.app
+*.apk
+*.aab
+build/
+builds/
+export/
+exports/
+
+# Export presets contain absolute paths and, if you ever add signing, credentials.
+# Uncomment if this becomes a shared repo:
+ export_presets.cfg
+
+# Editor / OS noise
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*~
+.idea/
+.vscode/
+
+# Godot may leave these next to scripts on some setups
+*.gd.uid.tmp
