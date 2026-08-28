@@ -50,7 +50,35 @@ func _ready() -> void:
 	focus_mode = Control.FOCUS_ALL
 	z_index = 144
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	_ensure_ui()
+	# ROOT CAUSE: _ensure_ui() used to run here. At _ready the panel measures 0x0, so
+	# the whole tree -- CenterContainer, card, margin, VBox, scrolls, label -- was
+	# constructed against a zero-sized parent. A CenterContainer positions its child
+	# from its own size, so everything landed at the origin with minimum sizes, and
+	# those measurements were cached. Godot only re-sorts containers on a resize
+	# notification, which is exactly why nothing short of a real window resize ever
+	# fixed it. The UI is now built in present(), once the panel has a real size.
+
+func _adopt_parent_size() -> void:
+	# The panel is anchored full-rect, but anchors only resolve on a layout pass. When
+	# present() runs on the same frame the panel was created, that pass has not
+	# happened yet and size is still 0x0. Take the size directly so the UI is built
+	# against real dimensions.
+	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+	var target_size: Vector2 = Vector2.ZERO
+	var parent_node: Node = get_parent()
+
+	if parent_node is Control:
+		target_size = (parent_node as Control).size
+
+	if target_size.x <= 1.0 or target_size.y <= 1.0:
+		if is_inside_tree():
+			target_size = get_viewport_rect().size
+
+	if target_size.x > 1.0 and target_size.y > 1.0:
+		if not size.is_equal_approx(target_size):
+			size = target_size
+
 
 func _ensure_ui() -> void:
 	if dim != null:
@@ -198,7 +226,12 @@ func _ensure_ui() -> void:
 	spectator_auto_emit_timer.timeout.connect(_on_spectator_auto_emit_timeout)
 	add_child(spectator_auto_emit_timer)
 func present(result: Dictionary) -> void:
+	# Give the panel a real size BEFORE the container tree is built. Building at 0x0
+	# is what caused every container to cache a zero-based layout that only a window
+	# resize could clear.
+	_adopt_parent_size()
 	_ensure_ui()
+	_adopt_parent_size()
 	visible = true
 	show()
 	mouse_filter = Control.MOUSE_FILTER_STOP
@@ -624,6 +657,9 @@ func _stop_spectator_frames() -> void:
 
 
 func _present_spectator_frame() -> void:
+	# Same requirement as present(): never build the container tree while the panel is
+	# still 0x0, or every container caches a zero-based layout.
+	_adopt_parent_size()
 	_ensure_ui()
 
 	if spectator_frames.is_empty():

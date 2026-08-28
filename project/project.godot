@@ -1,10 +1,6 @@
 ; Engine configuration file.
-; It's best edited using the editor UI and not directly,
-; since the parameters that go here are not all obvious.
-;
-; Format:
-;   [section] ; section goes between []
-;   param=value ; assign values to parameters
+; Reconstructed from the exported project.binary of EraLife.pck
+; Original: ERA-LIFE Experiment 2.0 v0.1.2 (Godot 4.4.1)
 
 config_version=5
 
