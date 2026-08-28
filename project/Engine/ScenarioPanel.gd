@@ -30,6 +30,14 @@ var spectator_auto_emit_armed: bool = false
 func _ready() -> void:
 	visible = false
 	mouse_filter = Control.MOUSE_FILTER_STOP
+	# FIX: the panel lays out correctly the first time it is shown, then fails on every
+	# later visit. On the first present the UI is built fresh and measured as it is
+	# constructed; on re-entry _ensure_ui() returns early and the panel is merely made
+	# visible again, so every container reuses the cached measurements from the
+	# previous scenario. Re-arming the layout pass on each show covers every path that
+	# reveals this panel, not just present().
+	if not visibility_changed.is_connected(_on_scenario_panel_visibility_changed):
+		visibility_changed.connect(_on_scenario_panel_visibility_changed)
 	# FIX: this panel was top_level, which makes a Control ignore its parent's
 	# transform -- so PRESET_FULL_RECT anchors had nothing to resolve against, the
 	# size had to be assigned by hand, and the container tree never received the
@@ -525,6 +533,19 @@ func _resort_container_subtree(node: Node) -> void:
 
 	if node is Control:
 		(node as Control).queue_redraw()
+
+
+func _on_scenario_panel_visibility_changed() -> void:
+	if not visible:
+		return
+
+	# Every time this panel is revealed -- first present or the tenth -- give it a
+	# fresh run of layout passes. Without this, a re-shown panel keeps the cached
+	# sizes from the previous scenario and renders off-screen again.
+	_layout_settle_frames = 6
+	_layout_passes_run = 0
+	set_process(true)
+	call_deferred("_force_scenario_card_layout")
 
 
 func snapshot_layout(tag: String) -> void:

@@ -1,2 +1,36 @@
-# Auto detect text files and perform LF normalization
-* text=auto
+# Text files: normalise line endings.
+*.gd            text eol=lf
+*.cfg           text eol=lf
+*.import        text eol=lf
+*.godot         text eol=lf
+*.md            text eol=lf
+*.json          text eol=lf
+*.gitignore     text eol=lf
+
+# BINARY -- never touch these. A blanket "* text=auto" rewrites line endings inside
+# binary files and corrupts them. That is why eralife_release_public.pub showed up as
+# "modified" without anyone editing it: git was rewriting bytes inside an RSA key.
+*.scn           binary
+*.tscn          binary
+*.res           binary
+*.pub           binary
+*.png           binary
+*.jpg           binary
+*.jpeg          binary
+*.webp          binary
+*.svg           binary
+*.ogg           binary
+*.wav           binary
+*.mp3           binary
+*.ttf           binary
+*.otf           binary
+*.pck           binary
+*.exe           binary
+*.zip           binary
+*.bin           binary
+*.ctex          binary
+*.oggvorbisstr  binary
+
+# UID files are plain text and SHOULD be committed -- Godot 4 uses them for stable
+# script references. They are not cache.
+*.uid           text eol=lf

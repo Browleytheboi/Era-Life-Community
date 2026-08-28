@@ -76026,8 +76026,23 @@ func _update_bending_hud() -> void:
 	panel_style.shadow_offset = Vector2(0, 12)
 
 	if bending_hud_legendary_vignette != null and bending_hud_open:
-		bending_hud_legendary_vignette.visible = true
-		bending_hud_legendary_vignette.color = Color(core.r * 0.16, core.g * 0.18, core.b * 0.24, 0.56)
+		# FIX: this ran on every HUD rebuild, and a training action forces a rebuild by
+		# clearing bending_hud_last_rebuild_signature. Re-showing and repainting a
+		# full-screen 0.56-alpha tint mid-interaction is the brief colour change over
+		# the whole screen after training. Only touch the vignette when the value it
+		# would be set to has actually changed.
+		var vignette_color: Color = Color(
+			core.r * 0.16,
+			core.g * 0.18,
+			core.b * 0.24,
+			0.56
+		)
+
+		if not bending_hud_legendary_vignette.visible:
+			bending_hud_legendary_vignette.visible = true
+
+		if not bending_hud_legendary_vignette.color.is_equal_approx(vignette_color):
+			bending_hud_legendary_vignette.color = vignette_color
 func _animate_bending_hud(delta: float) -> void:
 	if bending_hud_button == null:
 		return
