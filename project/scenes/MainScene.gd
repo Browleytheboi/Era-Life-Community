@@ -66291,6 +66291,11 @@ func _close_runtime_floating_huds_for_god_mode() -> void:
 
 	boxing_hub_open = false
 	bending_hud_open = false
+	# The vignette is a full-screen tint; if it is left visible after the hub
+	# closes it dims the whole game. _toggle_bending_hud() already handles this,
+	# these two close paths did not.
+	if bending_hud_legendary_vignette != null and is_instance_valid(bending_hud_legendary_vignette):
+		bending_hud_legendary_vignette.visible = false
 	wizard_hud_open = false
 	belongings_hud_open = false
 	crown_hub_open = false
@@ -75819,6 +75824,33 @@ func _zero_frame_contract_array(
 	return []
 func _update_bending_hud() -> void:
 	_ensure_bending_hud_button_shell()
+
+	# FIX: the vignette is a full-screen tint, and its visibility used to be decided
+	# at the very BOTTOM of this function -- behind five separate early returns. Any
+	# of those paths skipped the hide, so the tint stayed over the whole game.
+	#
+	# It also must not follow bending_hud_open alone. Training hides the panel without
+	# clearing that flag, so the flag goes stale: the overlay stayed up over the main
+	# screen, and the next click on the hub button merely toggled the stale flag off
+	# -- clearing the overlay but not opening the hub, which is why it took two clicks.
+	# Treat "the panel is actually visible" as the truth, and repair the flag when it
+	# has drifted.
+	var bending_panel_showing: bool = (
+		bending_hud_panel != null
+		and is_instance_valid(bending_hud_panel)
+		and bending_hud_panel.visible
+	)
+
+	if bending_hud_open and not bending_panel_showing:
+		bending_hud_open = false
+
+	if (
+		bending_hud_legendary_vignette != null
+		and is_instance_valid(bending_hud_legendary_vignette)
+	):
+		if bending_hud_legendary_vignette.visible != bending_panel_showing:
+			bending_hud_legendary_vignette.visible = bending_panel_showing
+
 	if bending_hud_button == null:
 		return
 
@@ -76043,6 +76075,14 @@ func _update_bending_hud() -> void:
 
 		if not bending_hud_legendary_vignette.color.is_equal_approx(vignette_color):
 			bending_hud_legendary_vignette.color = vignette_color
+	elif bending_hud_legendary_vignette != null:
+		# FIX: there was no else branch. The vignette was only ever shown -- nothing in
+		# this function turned it off -- so after closing the bending hub a
+		# full-screen 0.56-alpha tint stayed over the entire game. That is the "screen
+		# changed colour" report: not a flash during training, but a tint that never
+		# went away once the hub had been opened.
+		if bending_hud_legendary_vignette.visible:
+			bending_hud_legendary_vignette.visible = false
 func _animate_bending_hud(delta: float) -> void:
 	if bending_hud_button == null:
 		return
@@ -110103,6 +110143,11 @@ func _hide_floating_quick_panels() -> void:
 	_hide_artifact_target_popup()
 
 	bending_hud_open = false
+	# The vignette is a full-screen tint; if it is left visible after the hub
+	# closes it dims the whole game. _toggle_bending_hud() already handles this,
+	# these two close paths did not.
+	if bending_hud_legendary_vignette != null and is_instance_valid(bending_hud_legendary_vignette):
+		bending_hud_legendary_vignette.visible = false
 	if bending_hud_panel != null and is_instance_valid(bending_hud_panel):
 		bending_hud_panel.visible = false
 	if bending_hud_button != null and is_instance_valid(bending_hud_button):
