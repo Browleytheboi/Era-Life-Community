@@ -520,7 +520,7 @@ func _unique_positive_int_array(value: Variant) -> Array:
 			out.append(clean_id)
 
 	return out
-func run_npc_decision_pass(context: Dictionary = {}) -> Dictionary:
+func run_npc_decision_pass(_context: Dictionary = {}) -> Dictionary:
 	# Part 2: nothing in the game ever made an NPC decide. resolve_view_choice() was
 	# already fully actor-agnostic, and _latest_parent_decision_for_source() already
 	# advances a contract to its follow-up stage when the OTHER decision actor
@@ -839,7 +839,8 @@ func runtime_tick(
 	EraLog.watch_sweep()
 
 	# Let non-player decision actors respond to their own situations.
-	var npc_decision_report: Dictionary = run_npc_decision_pass({
+	# Result intentionally unused: the pass reports through EraLog.
+	var _npc_decision_report: Dictionary = run_npc_decision_pass({
 		"source": "pending_situations_runtime_tick"
 	})
 

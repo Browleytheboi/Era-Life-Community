@@ -624,11 +624,80 @@ func hydrate_playable_from_payload(
 			] = false
 
 	return last_hydration_report.duplicate(false)
+func _restore_engine_registry_from_payload(data: Dictionary) -> void:
+	# Applies the "engine_registry" section written by
+	# GameStateSerializationRuntime._collect_engine_registry_sections(), plus the
+	# relationship graph and entity registry that carry pets.
+	if gs == null or typeof(data) != TYPE_DICTIONARY:
+		return
+
+	var engine_registry: Dictionary = _safe_dictionary(
+		data.get("engine_registry", {})
+	)
+	var restored_stores: Array = []
+
+	if not engine_registry.is_empty():
+		if gs.vehicle_engine != null and engine_registry.has("vehicles"):
+			gs.vehicle_engine.vehicles = engine_registry.get("vehicles", {})
+			restored_stores.append("vehicles")
+
+		if gs.belongings_engine != null and engine_registry.has("belongings"):
+			gs.belongings_engine.belongings = engine_registry.get("belongings", {})
+			restored_stores.append("belongings")
+
+		if gs.property_engine != null and engine_registry.has("properties"):
+			gs.property_engine.properties = engine_registry.get("properties", {})
+			restored_stores.append("properties")
+
+			if engine_registry.has("used_addresses"):
+				gs.property_engine.used_addresses = engine_registry.get("used_addresses", {})
+
+		if gs.heirloom_engine != null and engine_registry.has("heirlooms"):
+			gs.heirloom_engine.heirlooms = engine_registry.get("heirlooms", {})
+			restored_stores.append("heirlooms")
+
+	var restored_graph: Dictionary = _safe_dictionary(
+		data.get("canonical_relationship_graph", {})
+	)
+
+	if not restored_graph.is_empty():
+		gs.canonical_relationship_graph = restored_graph
+		restored_stores.append("relationship_graph")
+
+	var restored_entities: Dictionary = _safe_dictionary(
+		data.get("entity_registry", {})
+	)
+
+	if not restored_entities.is_empty():
+		gs.entity_registry = restored_entities
+		restored_stores.append("entity_registry")
+
+	EraLog.truth(
+		"ERALIFE_REGISTRY_RESTORED|available=%d|restored=%s"
+		% [engine_registry.size(), str(restored_stores)]
+	)
+
+
 func begin_resident_checkpoint_spatial_hydration(
 	raw_data: Variant,
 	spatial_plan: Dictionary,
 	options: Dictionary = {}
 ) -> Dictionary:
+	# Entry log plus the engine-registry restore, placed BEFORE the guards below --
+	# earlier attempts sat after "gs.player == null" and similar checks and so never
+	# ran on a checkpoint resume. If this line does not appear, this function is not
+	# the load path at all.
+	EraLog.truth(
+		"ERALIFE_SPATIAL_HYDRATION|entry|data_is_dict=%s|player_null=%s"
+		% [
+			str(typeof(raw_data) == TYPE_DICTIONARY),
+			str(gs == null or gs.player == null)
+		]
+	)
+
+	if typeof(raw_data) == TYPE_DICTIONARY:
+		_restore_engine_registry_from_payload(raw_data as Dictionary)
+
 	var started_at_ms: int = int(
 		Time.get_ticks_msec()
 	)
@@ -4546,6 +4615,59 @@ func _hydrate_entity_graph(data: Dictionary, phase_report: Dictionary, _options:
 		gs.world_chronicle_engine.timeline = data.get("world_chronicle", [])
 
 	gs.world_feed = data.get("world_feed", [])
+
+	# FIX: vehicles, property, belongings, heirlooms and the pet relationship graph
+	# live in engines, not on the Person -- and the interactive checkpoint never
+	# captured or restored them, so every asset vanished on load. The payload now
+	# carries them under "engine_registry" (plus the graph and entity registry at the
+	# top level); apply them back onto their engines here, alongside the other
+	# structural stores.
+	var engine_registry: Dictionary = _safe_dictionary(
+		data.get("engine_registry", {})
+	)
+
+	if not engine_registry.is_empty():
+		var restored_stores: Array = []
+
+		if gs.vehicle_engine != null and engine_registry.has("vehicles"):
+			gs.vehicle_engine.vehicles = engine_registry.get("vehicles", {})
+			restored_stores.append("vehicles")
+
+		if gs.belongings_engine != null and engine_registry.has("belongings"):
+			gs.belongings_engine.belongings = engine_registry.get("belongings", {})
+			restored_stores.append("belongings")
+
+		if gs.property_engine != null and engine_registry.has("properties"):
+			gs.property_engine.properties = engine_registry.get("properties", {})
+			restored_stores.append("properties")
+
+			if engine_registry.has("used_addresses"):
+				gs.property_engine.used_addresses = engine_registry.get("used_addresses", {})
+
+		if gs.heirloom_engine != null and engine_registry.has("heirlooms"):
+			gs.heirloom_engine.heirlooms = engine_registry.get("heirlooms", {})
+			restored_stores.append("heirlooms")
+
+		EraLog.truth(
+			"ERALIFE_REGISTRY_RESTORED|available=%d|restored=%s"
+			% [engine_registry.size(), str(restored_stores)]
+		)
+
+	# Pets are edges in the relationship graph, keyed by the entity registry.
+	var restored_graph: Dictionary = _safe_dictionary(
+		data.get("canonical_relationship_graph", {})
+	)
+
+	if not restored_graph.is_empty():
+		gs.canonical_relationship_graph = restored_graph
+
+	var restored_entities: Dictionary = _safe_dictionary(
+		data.get("entity_registry", {})
+	)
+
+	if not restored_entities.is_empty():
+		gs.entity_registry = restored_entities
+
 	for i in range(gs.world_feed.size()):
 		gs.world_feed [i] = gs.normalize_world_feed_entry(gs.world_feed [i])
 

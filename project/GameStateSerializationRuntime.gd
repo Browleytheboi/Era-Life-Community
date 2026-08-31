@@ -455,6 +455,18 @@ func _interactive_checkpoint_actor_snapshot(
 			property_name
 		)
 
+	# DIAGNOSTIC: age is not restoring on load. Confirm whether the save even captures
+	# it -- the generic property loop should, but PROPERTY_USAGE_STORAGE may exclude it.
+	EraLog.truth(
+		"ERALIFE_SNAPSHOT_ACTOR|has_age=%s|age=%s|has_money=%s|keys=%d"
+		% [
+			str(snapshot.has("age")),
+			str(snapshot.get("age", "-")),
+			str(snapshot.has("money")),
+			snapshot.size()
+		]
+	)
+
 	snapshot ["id"] = int(actor.id)
 	snapshot ["partner_id"] = (
 		int(actor.partner.id)
@@ -754,6 +766,47 @@ func _interactive_checkpoint_scenario_capsule(
 
 	return capsule
 
+func _collect_engine_registry_sections() -> Dictionary:
+	# Capture the engine stores the player can actually lose: vehicles, belongings,
+	# property, heirlooms. GameState's rewind collector gathers these too, but it
+	# dereferences a whole group of engines per section and throws if any one is
+	# absent -- losing every store in that section. Read each one directly so a
+	# missing engine costs only its own entry.
+	var registry: Dictionary = {}
+
+	if gs == null:
+		return registry
+
+	if gs.vehicle_engine != null and typeof(gs.vehicle_engine.vehicles) == TYPE_DICTIONARY:
+		registry ["vehicles"] = gs.vehicle_engine.vehicles.duplicate(true)
+
+	if gs.belongings_engine != null and typeof(gs.belongings_engine.belongings) == TYPE_DICTIONARY:
+		registry ["belongings"] = gs.belongings_engine.belongings.duplicate(true)
+
+	if gs.property_engine != null:
+		if typeof(gs.property_engine.properties) == TYPE_DICTIONARY:
+			registry ["properties"] = gs.property_engine.properties.duplicate(true)
+
+		if typeof(gs.property_engine.used_addresses) == TYPE_DICTIONARY:
+			registry ["used_addresses"] = gs.property_engine.used_addresses.duplicate(true)
+
+	if gs.heirloom_engine != null and typeof(gs.heirloom_engine.heirlooms) == TYPE_DICTIONARY:
+		registry ["heirlooms"] = gs.heirloom_engine.heirlooms.duplicate(true)
+
+	EraLog.truth(
+		"ERALIFE_REGISTRY_COLLECTED|keys=%d|vehicles=%s|belongings=%s|properties=%s|heirlooms=%s"
+		% [
+			registry.size(),
+			str(registry.has("vehicles")),
+			str(registry.has("belongings")),
+			str(registry.has("properties")),
+			str(registry.has("heirlooms"))
+		]
+	)
+
+	return registry
+
+
 func _build_interactive_checkpoint_payload(
 	options: Dictionary = {}
 ) -> Dictionary:
@@ -856,6 +909,22 @@ func _build_interactive_checkpoint_payload(
 			)
 		),
 		"seed_contract": seed_contract,
+		# FIX: the interactive checkpoint captured actors and world scalars but NO
+		# engine state, so vehicles, property, belongings, heirlooms, pets and market
+		# data were simply never saved -- they vanished on load because they were never
+		# written. GameState already assembles exactly these stores for its rewind
+		# snapshot, so reuse that rather than duplicating the field list.
+		"engine_registry": _collect_engine_registry_sections(),
+		"canonical_relationship_graph": (
+			gs.canonical_relationship_graph.duplicate(true)
+			if typeof(gs.canonical_relationship_graph) == TYPE_DICTIONARY
+			else {}
+		),
+		"entity_registry": (
+			gs.entity_registry.duplicate(true)
+			if typeof(gs.entity_registry) == TYPE_DICTIONARY
+			else {}
+		),
 		"life_packet": {
 			"schema": "eralife.life_packet",
 			"version": 1,
@@ -917,6 +986,15 @@ func save_interactive_reality_checkpoint(
 			"No active life is available to preserve.",
 			{}
 		)
+
+	# FIX: these four engines are created lazily by
+	# GameState._ensure_identity_checkpoint_runtime_dependencies(), which is called
+	# from save_game() and four other paths -- but NOT from this checkpoint save
+	# route. Arriving here directly left them null and the save was rejected with
+	# "Checkpoint authorities were not resident before save intent." Build them
+	# BEFORE the check below, or the list is computed from stale nulls.
+	if gs != null and gs.has_method("_ensure_identity_checkpoint_runtime_dependencies"):
+		gs._ensure_identity_checkpoint_runtime_dependencies()
 
 	var missing_authorities: Array = []
 
@@ -1006,6 +1084,52 @@ func save_interactive_reality_checkpoint(
 	save_report [
 		"reality_checkpoint_commit"
 	] = checkpoint_report.duplicate(false)
+
+	# FIX: this path sets skip_cross_device_checkpoint = true, so
+	# _build_cross_device_checkpoint() never runs -- and that is the ONLY place the
+	# <save>.bin.summary cache is written. Without it a load falls back to
+	# filename-derived metadata with no checkpoint_resume_contract, the resume shell
+	# is never materialised, the residency record never reaches "ready", and the load
+	# polls forever. The checkpoint itself IS committed here, so the resume contract
+	# exists; it just was not being persisted. Write the summary cache now.
+	if (
+		bool(checkpoint_report.get("success", false))
+		and gs.has_method("_read_saved_life_summary")
+		and gs.has_method("_write_saved_life_summary_cache")
+	):
+		var interactive_summary: Dictionary = _safe_dictionary(
+			gs._read_saved_life_summary(clean_path)
+		)
+		var interactive_resume_raw: Variant = checkpoint_report.get(
+			"checkpoint_resume_contract",
+			{}
+		)
+
+		if typeof(interactive_resume_raw) == TYPE_DICTIONARY:
+			interactive_summary ["checkpoint_resume_contract"] = (
+				(interactive_resume_raw as Dictionary).duplicate(false)
+			)
+
+		interactive_summary ["path"] = clean_path
+		interactive_summary ["checkpoint_summary_schema"] = (
+			"eralife.saved_life.resume_summary"
+		)
+
+		gs._write_saved_life_summary_cache(
+			clean_path,
+			interactive_summary
+		)
+
+		EraLog.truth(
+			"ERALIFE_SAVE_SUMMARY|path=%s|keys=%d|has_resume=%s|cache_written=%s"
+			% [
+				clean_path,
+				interactive_summary.size(),
+				str(interactive_summary.has("checkpoint_resume_contract")),
+				str(FileAccess.file_exists("%s.summary" % clean_path))
+			]
+		)
+
 	save_report ["success"] = bool(
 		checkpoint_report.get(
 			"success",
@@ -1031,15 +1155,20 @@ func save_interactive_reality_checkpoint(
 		) - started_at_ms
 	)
 
+	# FIX: "%" binds tighter than "+", so only the final "|at_ms=%d" was formatted and
+	# every earlier placeholder printed literally as %s / %d. Parenthesise the
+	# concatenation so the format applies to the whole string.
 	EraLog.truth(
-		"ERALIFE_LINEAGE_SAVE_TRUTH"
-		+ "|success=%s"
-		+ "|actor_id=%d"
-		+ "|checkpoint_committed=%s"
-		+ "|full_universe_walk=false"
-		+ "|engine_registry_export=false"
-		+ "|duration_ms=%d"
-		+ "|at_ms=%d"
+		(
+			"ERALIFE_LINEAGE_SAVE_TRUTH"
+			+ "|success=%s"
+			+ "|actor_id=%d"
+			+ "|checkpoint_committed=%s"
+			+ "|full_universe_walk=false"
+			+ "|engine_registry_export=false"
+			+ "|duration_ms=%d"
+			+ "|at_ms=%d"
+		)
 		% [
 			str(
 				save_report.get(
@@ -1954,6 +2083,17 @@ func _build_cross_device_checkpoint(
 	path: String,
 	options: Dictionary
 ) -> void:
+	# DIAGNOSTIC: no SAVE_CHECKPOINT line appears, so this function either is not
+	# called or returns before the commit. Report entry and each guard.
+	EraLog.truth(
+		"ERALIFE_XDEV|entry|gs_null=%s|path=%s|has_commit=%s"
+		% [
+			str(gs == null),
+			str(path),
+			str(gs != null and gs.has_method("commit_current_life_checkpoint_contract"))
+		]
+	)
+
 	if gs == null:
 		return
 
@@ -2048,6 +2188,19 @@ func _build_cross_device_checkpoint(
 
 
 
+
+	# DIAGNOSTIC: the saved .summary cache -- which is the ONLY place the resume
+	# contract is stored -- is written only when this commit succeeded. A load with no
+	# .summary file falls back to filename metadata (12 keys, no resume contract) and
+	# can never reach "ready". Report what the commit returned.
+	EraLog.truth(
+		"ERALIFE_SAVE_CHECKPOINT|commit_empty=%s|success=%s|reason=%s"
+		% [
+			str(checkpoint_commit_report.is_empty()),
+			str(checkpoint_commit_report.get("success", false)),
+			str(checkpoint_commit_report.get("reason", "-"))
+		]
+	)
 
 	if (
 		not checkpoint_commit_report.is_empty()
@@ -2166,6 +2319,16 @@ func _build_cross_device_checkpoint(
 		gs._write_saved_life_summary_cache(
 			clean_path,
 			summary
+		)
+
+		EraLog.truth(
+			"ERALIFE_SAVE_SUMMARY|path=%s|keys=%d|has_resume=%s|cache_written=%s"
+			% [
+				clean_path,
+				summary.size(),
+				str(summary.has("checkpoint_resume_contract")),
+				str(FileAccess.file_exists("%s.summary" % clean_path))
+			]
 		)
 
 	if gs.game_state_contract_engine == null:

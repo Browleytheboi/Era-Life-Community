@@ -254,11 +254,28 @@ func _era_modifier(good_name: String) -> float:
 		return 1.0
 
 	var mods = GOODS_DEFS [good_name].get("era_mods", {})
+
+	# Same chassis-runtime hazard as _realm_local_modifier(): during a load gs.era can
+	# still be null, and gs.era.name would throw.
+	if gs == null or gs.era == null:
+		return 1.0
+
 	return float(mods.get(gs.era.name, 1.0))
 
 
 func _realm_local_modifier(realm_id: int) -> float:
 	if realm_id == -1:
+		return 1.0
+
+	# FIX: this checked realms.has(realm_id) but not that realm_engine exists. During a
+	# load the silk road projection runs against a chassis runtime that has no
+	# realm_engine yet, so gs.realm_engine.realms threw "Invalid access to property or
+	# key 'realms' on a base object of type 'Nil'" and killed the load. Fall back to
+	# the neutral modifier when the engine is not resident yet.
+	if gs == null or gs.realm_engine == null:
+		return 1.0
+
+	if typeof(gs.realm_engine.realms) != TYPE_DICTIONARY:
 		return 1.0
 
 	if not gs.realm_engine.realms.has(realm_id):
@@ -284,6 +301,13 @@ func _realm_local_modifier(realm_id: int) -> float:
 func _realm_name(realm_id: int) -> String:
 	if realm_id == -1:
 		return ""
+
+	if gs == null or gs.realm_engine == null:
+		return ""
+
+	if typeof(gs.realm_engine.realms) != TYPE_DICTIONARY:
+		return ""
+
 	if not gs.realm_engine.realms.has(realm_id):
 		return ""
 	return str(gs.realm_engine.realms [realm_id].get("name", ""))

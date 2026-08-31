@@ -1233,6 +1233,19 @@ func acquire_listing(
 
 	# Watch the deferred hand-off itself: if the tail never runs, or runs and returns
 	# through one of its guards without finishing, nothing else would ever report it.
+	# Report which runtime the purchase is writing to. If a loaded save leaves the game
+	# pointed at a different GameState than the one the resume restored into, pets
+	# would commit to an object nothing reads.
+	EraLog.truth(
+		"ERALIFE_PET_RUNTIME|gs=%d|graph_engine=%s|entity_count=%d|edges=%d"
+		% [
+			int(gs.get_instance_id()),
+			str(gs.relationship_graph_contract_engine != null),
+			gs.entity_registry.size() if typeof(gs.entity_registry) == TYPE_DICTIONARY else -1,
+			_safe_dictionary(gs.canonical_relationship_graph.get("edges", {})).size()
+		]
+	)
+
 	EraLog.watch_begin(
 		"pet_acquisition:%s" % entity_id,
 		"pet_acquisition_tail"

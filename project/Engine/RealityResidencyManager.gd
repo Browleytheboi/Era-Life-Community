@@ -27,6 +27,10 @@ var preview_signature_by_slot: Dictionary = {}
 # declared degraded. Boot publishes 5 surfaces in well under this.
 const MAX_PROJECTION_TAIL_STEPS: int = 900
 var active_service_keys: Array = []
+# key -> first time it was seen orphaned, so a key is only pruned once it has been
+# orphaned continuously for SERVICE_KEY_ORPHAN_GRACE_MS.
+var service_key_first_seen_ms: Dictionary = {}
+const SERVICE_KEY_ORPHAN_GRACE_MS: int = 3000
 var attached_signature: String = ""
 var next_chassis_sequence: int = 1
 var service_cursor: int = 0
@@ -2887,6 +2891,14 @@ func _service_record(
 	)
 	resident_records [signature] = record
 
+	# DIAGNOSTIC: the checkpoint key is registered (keys=2|records=2 in the logs) but
+	# CHECKPOINT_RESOLVE never fires, so _service_record() is evidently never reached
+	# for that signature. Report every record this actually services.
+	EraLog.truth(
+		"ERALIFE_SERVICE_RECORD|signature=%s|state=%s"
+		% [signature, state]
+	)
+
 	if state in [
 		"checkpoint_resolution_pending",
 		"rehydration_pending"
@@ -3620,6 +3632,18 @@ func _hydrate_checkpoint_runtime_on_worker(
 	}
 
 	if not payload.is_empty():
+		# The decoded checkpoint payload passes through here. Report what it carries so
+		# we can tell whether the engine registry survived the save/decode round trip
+		# regardless of which hydration function ends up applying it.
+		EraLog.truth(
+			"ERALIFE_PAYLOAD_DECODED|keys=%d|has_engine_registry=%s|has_graph=%s"
+			% [
+				payload.size(),
+				str(payload.has("engine_registry")),
+				str(payload.has("canonical_relationship_graph"))
+			]
+		)
+
 		var npc_rows_raw: Variant = payload.get(
 			"npcs",
 			[]
@@ -4054,6 +4078,57 @@ func _checkpoint_resume_contract_for_candidate(
 				(load_continue_resume_raw as Dictionary).duplicate(false)
 				if typeof(load_continue_resume_raw) == TYPE_DICTIONARY
 				else {}
+			)
+
+	# FIX: the candidate carries checkpoint_path, path, load_options and metadata, but
+	# never checkpoint_resume_contract -- RealitySnapshotContractEngine builds it from
+	# the record and never opens the save file. The contract IS on disk: the save path
+	# writes it into the saved-life summary. Without it this function returned {},
+	# _materialize_checkpoint_resume_shell() was skipped entirely, resume_shell_ready
+	# stayed false, and the record never reached "ready" -- the load polled forever.
+	# Read the summary before giving up.
+	if resume_contract.is_empty():
+		var summary_path: String = str(
+			checkpoint_candidate.get(
+				"checkpoint_path",
+				checkpoint_candidate.get("path", "")
+			)
+		).strip_edges()
+
+		# Log unconditionally -- the previous version only logged inside the guard, so
+		# when the guard failed there was no evidence at all of why.
+		EraLog.truth(
+			"ERALIFE_RESUME_FROM_SUMMARY|path='%s'|gs_null=%s|has_reader=%s"
+			% [
+				summary_path,
+				str(gs == null),
+				str(gs != null and gs.has_method("_read_saved_life_summary"))
+			]
+		)
+
+		if (
+			summary_path != ""
+			and gs != null
+			and gs.has_method("_read_saved_life_summary")
+		):
+			var saved_summary: Dictionary = _dict(
+				gs._read_saved_life_summary(summary_path)
+			)
+			var summary_resume_raw: Variant = saved_summary.get(
+				"checkpoint_resume_contract",
+				{}
+			)
+
+			if typeof(summary_resume_raw) == TYPE_DICTIONARY:
+				resume_contract = (summary_resume_raw as Dictionary).duplicate(false)
+
+			EraLog.truth(
+				"ERALIFE_RESUME_FROM_SUMMARY|path=%s|summary_keys=%d|resume_found=%s"
+				% [
+					summary_path,
+					saved_summary.size(),
+					str(not resume_contract.is_empty())
+				]
 			)
 
 	if resume_contract.is_empty():
@@ -4717,6 +4792,109 @@ func _materialize_checkpoint_resume_shell(
 			"reason": "resident_runtime_missing"
 		}
 
+	# FIX: this is the only hydration a checkpoint resume performs -- the resume truth
+	# reports full_payload_hydrated=false, so the save payload is never applied. Three
+	# earlier attempts put this restore on payload-hydration paths that never run.
+	# Apply the engine registry carried by the resume contract here.
+	var resume_registry: Dictionary = _dict(
+		resume_contract.get("engine_registry", {})
+	)
+	var resume_restored: Array = []
+
+	if not resume_registry.is_empty():
+		# The stores arrived but were dropped: the chassis runtime has no vehicle,
+		# belongings, property or heirloom engine yet, so every guard below failed and
+		# only the graph and entity registry survived. Create whichever engines are
+		# missing before applying -- an engine with no data is useless anyway, and the
+		# data is right here.
+		if resident_gs.vehicle_engine == null and resume_registry.has("vehicles"):
+			resident_gs.vehicle_engine = VehicleEngine.new(resident_gs)
+
+		if resident_gs.belongings_engine == null and resume_registry.has("belongings"):
+			resident_gs.belongings_engine = BelongingsEngine.new(resident_gs)
+
+		if resident_gs.property_engine == null and resume_registry.has("properties"):
+			resident_gs.property_engine = PropertyEngine.new(resident_gs)
+
+		if resident_gs.heirloom_engine == null and resume_registry.has("heirlooms"):
+			resident_gs.heirloom_engine = HeirloomEngine.new(resident_gs)
+
+		if resident_gs.vehicle_engine != null and resume_registry.has("vehicles"):
+			resident_gs.vehicle_engine.vehicles = resume_registry.get("vehicles", {})
+			resume_restored.append("vehicles")
+
+		if resident_gs.belongings_engine != null and resume_registry.has("belongings"):
+			resident_gs.belongings_engine.belongings = resume_registry.get("belongings", {})
+			resume_restored.append("belongings")
+
+		if resident_gs.property_engine != null and resume_registry.has("properties"):
+			resident_gs.property_engine.properties = resume_registry.get("properties", {})
+			resume_restored.append("properties")
+
+			if resume_registry.has("used_addresses"):
+				resident_gs.property_engine.used_addresses = resume_registry.get("used_addresses", {})
+
+		if resident_gs.heirloom_engine != null and resume_registry.has("heirlooms"):
+			resident_gs.heirloom_engine.heirlooms = resume_registry.get("heirlooms", {})
+			resume_restored.append("heirlooms")
+
+	# FIX: pets stayed broken after a load -- existing ones did not come back and new
+	# purchases silently did nothing -- because the resumed runtime has no
+	# relationship-graph or pets engines. The graph data alone is useless without the
+	# engines that read and write it, so create them here the same way the asset
+	# engines are created above.
+	if resident_gs.relationship_graph_contract_engine == null:
+		resident_gs.relationship_graph_contract_engine = (
+			RelationshipGraphContractEngine.new(resident_gs)
+		)
+
+	if resident_gs.pets_contract_engine == null:
+		resident_gs.pets_contract_engine = PetsContractEngine.new(resident_gs)
+
+	# The graph and registry must be well-formed dictionaries before either engine
+	# touches them, or a restored-but-malformed graph breaks every later write.
+	if typeof(resident_gs.entity_registry) != TYPE_DICTIONARY:
+		resident_gs.entity_registry = {}
+
+	if typeof(resident_gs.canonical_relationship_graph) != TYPE_DICTIONARY:
+		resident_gs.canonical_relationship_graph = {}
+
+	var resume_graph: Dictionary = _dict(
+		resume_contract.get("canonical_relationship_graph", {})
+	)
+
+	if not resume_graph.is_empty():
+		resident_gs.canonical_relationship_graph = resume_graph
+		resume_restored.append("relationship_graph")
+
+	# Restore the entity registry whenever the contract carries the key at all, even
+	# if empty. Skipping an empty one leaves the resumed runtime holding entities from
+	# a different life while the graph edges come from this one -- pets then reference
+	# animals that do not exist in the registry.
+	if resume_contract.has("entity_registry"):
+		resident_gs.entity_registry = _dict(
+			resume_contract.get("entity_registry", {})
+		)
+		resume_restored.append("entity_registry")
+
+	EraLog.truth(
+		"ERALIFE_RESUME_REGISTRY_RESTORED|available=%d|restored=%s"
+		% [resume_registry.size(), str(resume_restored)]
+	)
+
+	# Report the actual state of the resumed runtime rather than assuming which
+	# engines exist. Four attempts at the pet problem have guessed at this; measure it.
+	EraLog.truth(
+		"ERALIFE_RESUME_RUNTIME|graph_engine=%s|pets_engine=%s|entity_count=%d|edge_count=%d|is_player_runtime=%s"
+		% [
+			str(resident_gs.relationship_graph_contract_engine != null),
+			str(resident_gs.pets_contract_engine != null),
+			resident_gs.entity_registry.size() if typeof(resident_gs.entity_registry) == TYPE_DICTIONARY else -1,
+			_dict(resident_gs.canonical_relationship_graph.get("edges", {})).size(),
+			str(gs != null and resident_gs == gs)
+		]
+	)
+
 	var bootstrap: Dictionary = (
 		resident_gs
 		.resident_runtime_bootstrap_snapshot()
@@ -5305,11 +5483,24 @@ func _service_rehydration_record(
 	)
 
 	if state == "checkpoint_resolution_pending":
+		# DIAGNOSTIC: the load reserves a checkpoint and then polls forever with
+		# success=true|ready=false, which means this resolution never completes. Report
+		# entry and the candidate result so we can see whether the pump reaches here at
+		# all, and if so what it rejects.
 		var resolved_candidate: Dictionary = (
 			_checkpoint_candidate_for_record(
 				signature,
 				record
 			)
+		)
+
+		EraLog.truth(
+			"ERALIFE_CHECKPOINT_RESOLVE|signature=%s|candidate_success=%s|reason=%s"
+			% [
+				signature,
+				str(resolved_candidate.get("success", false)),
+				str(resolved_candidate.get("reason", "-"))
+			]
 		)
 
 		if not bool(
@@ -5376,9 +5567,16 @@ func _service_rehydration_record(
 				Time.get_ticks_msec()
 			)
 
+		EraLog.truth(
+			"ERALIFE_CKPT_STAGE|signature=%s|stage=chassis_allocated|hot=%s"
+			% [signature, str(used_hot_chassis)]
+		)
+
 		_inject_shared_authorities(
 			runtime
 		)
+
+		EraLog.truth("ERALIFE_CKPT_STAGE|signature=%s|stage=authorities_injected" % signature)
 
 		if runtime.reality_checkpoint_contract_engine == null:
 			runtime.reality_checkpoint_contract_engine = (
@@ -5394,12 +5592,23 @@ func _service_rehydration_record(
 				)
 			)
 
+		EraLog.truth("ERALIFE_CKPT_STAGE|signature=%s|stage=engines_built" % signature)
+
 		var candidate_resume_contract: Dictionary = (
 			_checkpoint_resume_contract_for_candidate(
 				resolved_candidate
 			)
 		)
 		var candidate_resume_report: Dictionary = {}
+
+		EraLog.truth(
+			"ERALIFE_CKPT_STAGE|signature=%s|stage=resume_contract_built|empty=%s|candidate_keys=%s"
+			% [
+				signature,
+				str(candidate_resume_contract.is_empty()),
+				str(resolved_candidate.keys()).substr(0, 300)
+			]
+		)
 
 		if not candidate_resume_contract.is_empty():
 			candidate_resume_report = (
@@ -5419,6 +5628,20 @@ func _service_rehydration_record(
 				"success",
 				false
 			)
+		)
+
+		# The transition to "ready" happens only inside `if resume_shell_ready:`. When
+		# the resume shell fails to materialise nothing is reported at all -- the
+		# record just stays checkpoint_resolution_pending forever, which is the load
+		# polling 4,500 times with ready=false. Report the outcome and its reason.
+		EraLog.truth(
+			"ERALIFE_CKPT_STAGE|signature=%s|stage=resume_shell|ready=%s|reason=%s|contract_empty=%s"
+			% [
+				signature,
+				str(resume_shell_ready),
+				str(candidate_resume_report.get("reason", "-")),
+				str(candidate_resume_contract.is_empty())
+			]
 		)
 
 		record ["runtime_ref"] = runtime
@@ -5487,6 +5710,10 @@ func _service_rehydration_record(
 						signature
 					] = engine_graph_worker
 					engine_graph_worker_started = true
+
+			EraLog.truth(
+				"ERALIFE_CKPT_STAGE|signature=%s|stage=marked_ready" % signature
+			)
 
 			record ["state"] = "ready"
 			record ["ready_at_ms"] = now_ms
@@ -8606,6 +8833,34 @@ func _priority_resident_signature_for_service() -> String:
 		attached_signature
 	).strip_edges()
 
+	# FIX: the attached branch below returns as soon as the attached record wants
+	# foreground service -- and a "ready" record with residency_tail_pending qualifies.
+	# With the projection tail now rescheduling itself the attached record is
+	# permanently hungry, so a checkpoint registered by a load NEVER got a turn: the
+	# logs show only godmode_... serviced, thousands of times, while the checkpoint
+	# stayed at service_attempts=0. A checkpoint waiting to resolve is blocking a
+	# player action, so it is checked FIRST.
+	for raw_pending_signature in resident_records.keys():
+		var pending_signature: String = str(raw_pending_signature).strip_edges()
+
+		if pending_signature == "":
+			continue
+
+		var pending_record: Dictionary = _record_for(pending_signature)
+
+		if pending_record.is_empty():
+			continue
+
+		if str(pending_record.get("state", "")) in [
+			"checkpoint_resolution_pending",
+			"rehydration_pending"
+		]:
+			EraLog.truth(
+				"ERALIFE_PRIORITY|chose_pending=%s|over_attached=%s"
+				% [pending_signature, clean_attached_signature]
+			)
+			return pending_signature
+
 	if clean_attached_signature != "":
 		var attached_record: Dictionary = _record_for(
 			clean_attached_signature
@@ -8766,8 +9021,93 @@ func _ready_resident_waiting_for_first_lens_signature() -> String:
 
 	return ""
 
-func _ensure_service_pump() -> void:
+func _has_pending_non_attached_record() -> bool:
+	# True when some record other than the attached one still needs servicing --
+	# a checkpoint being resolved during a load, for example.
+	for raw_signature in resident_records.keys():
+		if str(raw_signature) == attached_signature:
+			continue
+
+		var other_record: Dictionary = _record_for(str(raw_signature))
+		if other_record.is_empty():
+			continue
+
+		var other_state: String = str(other_record.get("state", ""))
+		if other_state != "ready" and other_state != "":
+			return true
+
+	return false
+
+
+func _prune_orphaned_service_keys() -> void:
+	# A "resident:<signature>" key whose record has been erased keeps the pump alive
+	# forever: it arms every frame, finds nothing to service, and re-arms. The logs
+	# showed 369 consecutive "result=armed|keys=1|records=0" lines -- one orphaned key
+	# and no records at all. Drop keys that no longer refer to a record.
 	if active_service_keys.is_empty():
+		return
+
+	# Keys are pruned only after a grace period. Two earlier attempts both failed:
+	# pruning immediately wiped VALID keys during the transient moment when
+	# resident_records is empty (the checkpoint's own key vanished right after
+	# registration), and skipping entirely while records was empty let an orphaned
+	# chassis key spam the pump hundreds of times at boot. A grace period handles
+	# both: a key that is still orphaned seconds later is genuinely dead.
+	var now_ms: int = int(Time.get_ticks_msec())
+	var surviving_keys: Array = []
+	var orphan_samples: Array = []
+
+	for raw_key in active_service_keys:
+		var clean_key: String = str(raw_key).strip_edges()
+		var signature: String = ""
+
+		for prefix in ["resident:", "chassis:", "projection:"]:
+			if clean_key.begins_with(prefix):
+				signature = clean_key.substr(prefix.length())
+				break
+
+		if signature == "" or resident_records.has(signature):
+			surviving_keys.append(clean_key)
+			service_key_first_seen_ms.erase(clean_key)
+			continue
+
+		# Orphaned right now -- but give it time to have its record registered.
+		if not service_key_first_seen_ms.has(clean_key):
+			service_key_first_seen_ms [clean_key] = now_ms
+			surviving_keys.append(clean_key)
+			continue
+
+		if now_ms - int(service_key_first_seen_ms.get(clean_key, now_ms)) < SERVICE_KEY_ORPHAN_GRACE_MS:
+			surviving_keys.append(clean_key)
+			continue
+
+		service_key_first_seen_ms.erase(clean_key)
+
+		if orphan_samples.size() < 3:
+			orphan_samples.append(clean_key)
+
+	if surviving_keys.size() != active_service_keys.size():
+		EraLog.truth(
+			"ERALIFE_PUMP_PRUNE|removed=%d|remaining=%d|records=%d|samples=%s"
+			% [
+				active_service_keys.size() - surviving_keys.size(),
+				surviving_keys.size(),
+				resident_records.size(),
+				str(orphan_samples)
+			]
+		)
+
+	active_service_keys = surviving_keys
+
+
+func _ensure_service_pump() -> void:
+	_prune_orphaned_service_keys()
+
+	if active_service_keys.is_empty():
+		EraLog.truth(
+			"ERALIFE_PUMP_ARM|result=declined|reason=no_active_service_keys|records=%d"
+			% resident_records.size()
+		)
 		service_pump_armed = false
 		return
 
@@ -8820,8 +9160,39 @@ func _ensure_service_pump() -> void:
 			and not checkpoint_progressive_hydration_active
 		)
 
+		# FIX: this dormancy check only considered the ATTACHED record. Loading a save
+		# registers a new checkpoint record that needs servicing while the attached
+		# record is still the old, finished one -- so the pump refused to arm, the
+		# checkpoint was never serviced, and the load stalled at
+		# first_false_gate=resident_runtime_exists with service_attempts=0 and no
+		# message. Only go dormant when nothing else is waiting for work.
+		var other_records_pending: bool = false
+
+		for raw_signature in resident_records.keys():
+			if str(raw_signature) == attached_signature:
+				continue
+
+			var other_record: Dictionary = _record_for(
+				str(raw_signature)
+			)
+
+			if other_record.is_empty():
+				continue
+
+			var other_state: String = str(
+				other_record.get(
+					"state",
+					""
+				)
+			)
+
+			if other_state != "ready" and other_state != "":
+				other_records_pending = true
+				break
+
 		if (
 			not attached_record.is_empty()
+			and not other_records_pending
 			and bool(
 				attached_record.get(
 					"lens_attached",
@@ -8836,6 +9207,10 @@ func _ensure_service_pump() -> void:
 			) == "ready"
 			and all_attached_publication_terminal
 		):
+			EraLog.truth(
+				"ERALIFE_PUMP_ARM|result=declined|reason=attached_ready_dormant|attached=%s|other_pending=%s|keys=%d"
+				% [attached_signature, str(other_records_pending), active_service_keys.size()]
+			)
 			service_pump_armed = false
 
 			set_meta(
@@ -8894,6 +9269,12 @@ func _ensure_service_pump() -> void:
 
 
 
+
+	EraLog.truth(
+		"ERALIFE_PUMP_ARM|mgr=%d|result=armed|attached=%s|keys=%d|records=%d|key_list=%s"
+		% [int(get_instance_id()), attached_signature, active_service_keys.size(), resident_records.size(),
+			str(active_service_keys).substr(0, 120)]
+	)
 
 	service_pump_armed = true
 
@@ -8982,6 +9363,37 @@ func _service_pump_frame() -> void:
 	if active_service_keys.is_empty():
 		service_pump_armed = false
 		return
+
+	# FIX: a load registers a checkpoint record and then waits for it to resolve, but
+	# the rest of this function has many paths that yield or go dormant -- the truth
+	# line showed service_pump_armed flipping to false while the checkpoint still sat
+	# at service_attempts=0, and only the attached record was ever serviced. Guarding
+	# each disarm individually kept missing one, so a pending checkpoint is serviced
+	# here directly, ahead of all of it. This is a blocking player action; it should
+	# not be competing with background work for a turn.
+	for raw_pending_signature in resident_records.keys():
+		var pending_signature: String = str(raw_pending_signature).strip_edges()
+
+		if pending_signature == "":
+			continue
+
+		var pending_record: Dictionary = _record_for(pending_signature)
+
+		if pending_record.is_empty():
+			continue
+
+		if str(pending_record.get("state", "")) in [
+			"checkpoint_resolution_pending",
+			"rehydration_pending"
+		]:
+			service_pump_armed = true
+			_service_record(
+				pending_signature,
+				1,
+				4
+			)
+			_ensure_service_pump()
+			return
 
 	var attached_projection_publication_only: bool = false
 	var attached_surface_visible: bool = false
@@ -9381,9 +9793,15 @@ func _service_pump_frame() -> void:
 			true
 		)
 
+	# FIX: these yield paths disarmed the pump, immediately re-armed it, and returned
+	# without servicing anything. With a checkpoint waiting that is an infinite loop:
+	# the log showed "result=armed" every frame while service_attempts stayed at 0,
+	# so a loaded save never resolved. Yielding to the interactive lens is correct for
+	# background work, but not when another record is actually waiting on the pump.
 	if (
 		not attached_projection_publication_only
 		and _service_pump_should_yield_to_interactive_lens()
+		and not _has_pending_non_attached_record()
 	):
 		service_pump_armed = false
 		_ensure_service_pump()
@@ -9396,6 +9814,7 @@ func _service_pump_frame() -> void:
 	if (
 		not attached_projection_publication_only
 		and waiting_signature != ""
+		and not _has_pending_non_attached_record()
 	):
 		set_meta(
 			"ready_resident_service_paused_for_first_lens",
@@ -10187,6 +10606,16 @@ func _next_service_key(
 					""
 				)
 			)
+			EraLog.truth(
+				"ERALIFE_NEXT_KEY|preferred_sig=%s|state=%s|key=%s|in_active=%s"
+				% [
+					clean_preferred_signature,
+					preferred_state,
+					preferred_key,
+					str(preferred_key in active_service_keys)
+				]
+			)
+
 			var preferred_requires_service: bool = (
 				preferred_state in [
 					"reserved",
@@ -10549,6 +10978,20 @@ func _append_service_key(
 	if clean_key == "":
 		return
 
+	# The checkpoint record's key never appeared in active_service_keys during a load,
+	# so report every registration to see whether it is added and then lost, or never
+	# added at all.
+	if clean_key.find("checkpoint") >= 0:
+		EraLog.truth(
+			"ERALIFE_KEY_APPEND|mgr=%d|key=%s|already_present=%s|keys_before=%d"
+			% [
+				int(get_instance_id()),
+				clean_key,
+				str(clean_key in active_service_keys),
+				active_service_keys.size()
+			]
+		)
+
 	if clean_key not in active_service_keys:
 		active_service_keys.append(
 			clean_key
@@ -10760,7 +11203,36 @@ func import_state(
 		)
 	)
 
-	attached_signature = ""
+	# FIX: this hardcoded attached_signature = "", discarding the value that
+	# export_state() deliberately saves. After loading, the restored record existed
+	# and its service key existed, but no reality was attached -- which is the
+	# first_false_gate=resident_runtime_exists stall, and why the pump armed 331 times
+	# without ever servicing anything. Restore what was saved, but only if the record
+	# it names actually came back with the import.
+	var imported_attached_signature: String = str(
+		imported.get(
+			"attached_signature",
+			""
+		)
+	).strip_edges()
+
+	if (
+		imported_attached_signature != ""
+		and imported_records.has(imported_attached_signature)
+	):
+		attached_signature = imported_attached_signature
+	else:
+		attached_signature = ""
+
+	EraLog.truth(
+		"ERALIFE_RESIDENCY_IMPORT|attached_restored=%s|signature=%s|records=%d"
+		% [
+			str(attached_signature != ""),
+			imported_attached_signature,
+			imported_records.size()
+		]
+	)
+
 	next_chassis_sequence = maxi(
 		1,
 		int(

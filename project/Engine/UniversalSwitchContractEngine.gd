@@ -3747,17 +3747,19 @@ func _commit_switch_actor_age_truth(
 		] = stale_surface_rejected
 
 	EraLog.truth(
-		"ERALIFE_ENTITY_SWITCH_AGE_TRUTH"
-		+ "|actor_id=%d"
-		+ "|canonical_age=%d"
-		+ "|observed_surface_age=%d"
-		+ "|surface_matches_person=%s"
-		+ "|stale_surface_rejected=%s"
-		+ "|person_mutated_from_surface=false"
-		+ "|person_contract_rebuild=false"
-		+ "|scalar_commit_only=true"
-		+ "|source=%s"
-		+ "|at_ms=%d"
+		(
+			"ERALIFE_ENTITY_SWITCH_AGE_TRUTH"
+			+ "|actor_id=%d"
+			+ "|canonical_age=%d"
+			+ "|observed_surface_age=%d"
+			+ "|surface_matches_person=%s"
+			+ "|stale_surface_rejected=%s"
+			+ "|person_mutated_from_surface=false"
+			+ "|person_contract_rebuild=false"
+			+ "|scalar_commit_only=true"
+			+ "|source=%s"
+			+ "|at_ms=%d"
+		)
 		% [
 			target_id,
 			canonical_age,
@@ -5655,13 +5657,15 @@ func continue_zero_frame_switch_tail(
 	_commit_state()
 
 	EraLog.truth(
-		"ERALIFE_ENTITY_SWITCH_TAIL_TRUTH"
-		+ "|completed=%d"
-		+ "|remaining=%d"
-		+ "|family_integrity_sync_called=false"
-		+ "|person_contract_rebuild_called=false"
-		+ "|maintenance_deferred=%d"
-		+ "|at_ms=%d"
+		(
+			"ERALIFE_ENTITY_SWITCH_TAIL_TRUTH"
+			+ "|completed=%d"
+			+ "|remaining=%d"
+			+ "|family_integrity_sync_called=false"
+			+ "|person_contract_rebuild_called=false"
+			+ "|maintenance_deferred=%d"
+			+ "|at_ms=%d"
+		)
 		% [
 			completed.size(),
 			switch_tail_queue.size(),

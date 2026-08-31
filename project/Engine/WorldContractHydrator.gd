@@ -178,6 +178,18 @@ func hydrate_resolved_checkpoint(
 				controlled_actor.id
 			)
 
+			# DIAGNOSTIC: money, year and era restore but age does not. Report what
+			# actually landed on the restored actor.
+			EraLog.truth(
+				"ERALIFE_RESUME_ACTOR|actor_id=%d|age=%s|year=%s|money=%s"
+				% [
+					int(controlled_actor.id),
+					str(controlled_actor.age),
+					str(gs.year),
+					str(controlled_actor.money)
+				]
+			)
+
 		if typeof(
 			gs.scenario_state
 		) != TYPE_DICTIONARY:

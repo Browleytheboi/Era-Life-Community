@@ -15105,6 +15105,39 @@ func hydrate_resolved_boot_checkpoint(boot_contract: Dictionary = {}, options: D
 	scenario_state ["last_boot_checkpoint_hydration_report"] = report.duplicate(true)
 	return report
 
+func _collect_resume_engine_registry() -> Dictionary:
+	# The player-visible engine stores, read defensively so a missing engine costs
+	# only its own entry rather than the whole registry.
+	var registry: Dictionary = {}
+
+	if vehicle_engine != null and typeof(vehicle_engine.vehicles) == TYPE_DICTIONARY:
+		registry ["vehicles"] = vehicle_engine.vehicles.duplicate(true)
+
+	if belongings_engine != null and typeof(belongings_engine.belongings) == TYPE_DICTIONARY:
+		registry ["belongings"] = belongings_engine.belongings.duplicate(true)
+
+	if property_engine != null:
+		if typeof(property_engine.properties) == TYPE_DICTIONARY:
+			registry ["properties"] = property_engine.properties.duplicate(true)
+
+		if typeof(property_engine.used_addresses) == TYPE_DICTIONARY:
+			registry ["used_addresses"] = property_engine.used_addresses.duplicate(true)
+
+	if heirloom_engine != null and typeof(heirloom_engine.heirlooms) == TYPE_DICTIONARY:
+		registry ["heirlooms"] = heirloom_engine.heirlooms.duplicate(true)
+
+	EraLog.truth(
+		"ERALIFE_RESUME_REGISTRY_SAVED|keys=%d|vehicles=%s|belongings=%s"
+		% [
+			registry.size(),
+			str(registry.has("vehicles")),
+			str(registry.has("belongings"))
+		]
+	)
+
+	return registry
+
+
 func commit_current_life_checkpoint_contract(
 	path: String,
 	save_report: Dictionary = {},
@@ -15352,6 +15385,22 @@ func commit_current_life_checkpoint_contract(
 		"player_id": actor_id,
 		"controlled_actor_id": actor_id,
 		"actor_snapshot": actor_snapshot,
+		# FIX: a checkpoint resume restores from THIS contract only -- the resume truth
+		# line reports full_payload_hydrated=false, so the save payload is never
+		# hydrated on load. Money, age and year came back because they live in
+		# actor_snapshot; vehicles, belongings, property, heirlooms and pets did not,
+		# because nothing carried them. Travel them with the resume contract.
+		"engine_registry": _collect_resume_engine_registry(),
+		"canonical_relationship_graph": (
+			canonical_relationship_graph.duplicate(true)
+			if typeof(canonical_relationship_graph) == TYPE_DICTIONARY
+			else {}
+		),
+		"entity_registry": (
+			entity_registry.duplicate(true)
+			if typeof(entity_registry) == TYPE_DICTIONARY
+			else {}
+		),
 		"year": int(
 			year
 		),
