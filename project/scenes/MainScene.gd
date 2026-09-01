@@ -23511,6 +23511,170 @@ func _present_attached_checkpoint_lens_now(
 
 	startup_intro_exiting = true
 
+	# Which GameState is MainScene actually playing on after a resume? Compare this
+	# against ERALIFE_RESUME_MIRRORED and ERALIFE_ASSETS_BIND -- if all three differ,
+	# the restore is landing on a runtime nothing reads.
+	EraLog.truth(
+		"ERALIFE_MAINSCENE_RUNTIME|gs=%s|vehicle_engine=%s|vehicle_owner_rows=%d|edges=%d"
+		% [
+			str(gs.get_instance_id()) if gs != null else "<null>",
+			str(gs != null and gs.vehicle_engine != null),
+			(
+				gs.vehicle_engine.vehicles.size()
+				if gs != null and gs.vehicle_engine != null and typeof(gs.vehicle_engine.vehicles) == TYPE_DICTIONARY
+				else -1
+			),
+			(
+				MainSceneHelpers._safe_dictionary(gs.canonical_relationship_graph.get("edges", {})).size()
+				if gs != null and typeof(gs.canonical_relationship_graph) == TYPE_DICTIONARY
+				else -1
+			)
+		]
+	)
+
+	# FIX: after the section refresh the pets query runs but reports
+	# graph_edges_total=0 -- the runtime it reads has an empty graph while the resume
+	# restored into a different one. Adopt the graph from the attached resident record.
+	# The report below is unconditional: an earlier version logged inside the guards,
+	# so when a guard failed there was no evidence of why.
+	var live_graph_edges: int = (
+		MainSceneHelpers._safe_dictionary(
+			gs.canonical_relationship_graph.get("edges", {})
+		).size()
+		if gs != null and typeof(gs.canonical_relationship_graph) == TYPE_DICTIONARY
+		else -1
+	)
+	var adopt_source_edges: int = -1
+	var adopt_source_id: int = 0
+	var adopt_applied: bool = false
+
+	if gs != null and gs.reality_residency_manager != null:
+		var attached_record: Dictionary = MainSceneHelpers._safe_dictionary(
+			gs.reality_residency_manager.resident_records.get(
+				str(gs.reality_residency_manager.attached_signature),
+				{}
+			)
+		)
+		var source_runtime = attached_record.get("runtime_ref", null)
+
+		if source_runtime is GameState:
+			adopt_source_id = int(source_runtime.get_instance_id())
+			adopt_source_edges = (
+				MainSceneHelpers._safe_dictionary(
+					source_runtime.canonical_relationship_graph.get("edges", {})
+				).size()
+				if typeof(source_runtime.canonical_relationship_graph) == TYPE_DICTIONARY
+				else -1
+			)
+
+			if source_runtime != gs and live_graph_edges <= 0 and adopt_source_edges > 0:
+				gs.canonical_relationship_graph = (
+					source_runtime.canonical_relationship_graph.duplicate(true)
+				)
+
+				if typeof(source_runtime.entity_registry) == TYPE_DICTIONARY:
+					gs.entity_registry = source_runtime.entity_registry.duplicate(true)
+
+				adopt_applied = true
+
+	# There are at least THREE runtimes in play: MainScene's gs, the attached record's
+	# runtime, and whichever one the relationships hub builds surfaces on -- the pets
+	# query reported graph_edges_total=0 on a gs matching neither of the first two.
+	# Rather than keep chasing them pairwise, push the best graph to every runtime the
+	# residency manager knows about.
+	if gs != null and gs.reality_residency_manager != null:
+		var best_graph: Dictionary = (
+			gs.canonical_relationship_graph
+			if typeof(gs.canonical_relationship_graph) == TYPE_DICTIONARY
+			else {}
+		)
+		var best_edges: int = MainSceneHelpers._safe_dictionary(
+			best_graph.get("edges", {})
+		).size()
+		var best_entities: Dictionary = (
+			gs.entity_registry
+			if typeof(gs.entity_registry) == TYPE_DICTIONARY
+			else {}
+		)
+		var propagated: int = 0
+
+		for raw_signature in gs.reality_residency_manager.resident_records.keys():
+			var record_row: Dictionary = MainSceneHelpers._safe_dictionary(
+				gs.reality_residency_manager.resident_records.get(raw_signature, {})
+			)
+			var record_runtime = record_row.get("runtime_ref", null)
+
+			if not (record_runtime is GameState) or record_runtime == gs:
+				continue
+
+			var record_edges: int = (
+				MainSceneHelpers._safe_dictionary(
+					record_runtime.canonical_relationship_graph.get("edges", {})
+				).size()
+				if typeof(record_runtime.canonical_relationship_graph) == TYPE_DICTIONARY
+				else 0
+			)
+
+			if record_edges < best_edges:
+				record_runtime.canonical_relationship_graph = best_graph.duplicate(true)
+				record_runtime.entity_registry = best_entities.duplicate(true)
+				propagated += 1
+
+		EraLog.truth(
+			"ERALIFE_LOAD_GRAPH_PROPAGATED|best_edges=%d|runtimes_updated=%d|records=%d"
+			% [
+				best_edges,
+				propagated,
+				gs.reality_residency_manager.resident_records.size()
+			]
+		)
+
+	EraLog.truth(
+		"ERALIFE_LOAD_GRAPH_ADOPTED|applied=%s|live_edges=%d|source_gs=%d|source_edges=%d|manager=%s|attached=%s"
+		% [
+			str(adopt_applied),
+			live_graph_edges,
+			adopt_source_id,
+			adopt_source_edges,
+			str(gs != null and gs.reality_residency_manager != null),
+			str(gs.reality_residency_manager.attached_signature) if gs != null and gs.reality_residency_manager != null else "-"
+		]
+	)
+
+	# FIX: after a load the pets section never queries at all -- PET_CARDS_READ does
+	# not appear, where it does in a normal session. The relationship hub is serving
+	# surfaces built before the resume. This uses the narrow, purpose-built section
+	# refresh rather than the new-world reset that was tried here before and wiped
+	# stats and money: it touches only the relationship sections.
+	if (
+		gs != null
+		and gs.reality_projection_contract_engine != null
+		and gs.reality_projection_contract_engine.has_method(
+			"queue_resident_relationship_section_refresh"
+		)
+		and gs.player != null
+	):
+		var pets_refresh: Dictionary = MainSceneHelpers._safe_dictionary(
+			gs.reality_projection_contract_engine
+			.queue_resident_relationship_section_refresh(
+				int(gs.player.id),
+				["pets", "household", "social"],
+				{
+					"source": "checkpoint_reattach_lens_presented",
+					"ui_is_renderer_only": true
+				}
+			)
+		)
+
+		EraLog.truth(
+			"ERALIFE_LOAD_PETS_REFRESH|actor_id=%d|success=%s|reason=%s"
+			% [
+				int(gs.player.id),
+				str(pets_refresh.get("success", false)),
+				str(pets_refresh.get("reason", "-"))
+			]
+		)
+
 	# REVERTED: _reset_world_specific_ui_lens_state_for_new_world_seed() was called
 	# here to clear stale relationship-hub surfaces after a load. It is meant for
 	# starting a NEW world and clears far more than UI caches -- with it in place a

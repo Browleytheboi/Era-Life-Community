@@ -37,6 +37,43 @@ func bind_host(
 ) -> void:
 	host = _host
 	gs = _gs
+
+	# The panel reported count:0 while the resumed runtime held the vehicles, so the
+	# panel and the restore are looking at different GameStates. Report which one this
+	# binds to, and what it can actually see.
+	EraLog.truth(
+		"ERALIFE_ASSETS_BIND|gs=%s|vehicle_engine=%s|vehicle_rows=%d|player_id=%s"
+		% [
+			str(_gs.get_instance_id()) if _gs != null else "<null>",
+			str(_gs != null and _gs.vehicle_engine != null),
+			(
+				_gs.vehicle_engine.vehicles.size()
+				if _gs != null and _gs.vehicle_engine != null and typeof(_gs.vehicle_engine.vehicles) == TYPE_DICTIONARY
+				else -1
+			),
+			str(_gs.player_id) if _gs != null else "-"
+		]
+	)
+
+	# Print the actual owner keys and their types. If the store holds "1" (String)
+	# while player_id is 1 (int), every lookup misses and the contract reports count:0
+	# even though the data is present.
+	if _gs != null and _gs.vehicle_engine != null and typeof(_gs.vehicle_engine.vehicles) == TYPE_DICTIONARY:
+		var key_report: Array = []
+
+		for raw_key in _gs.vehicle_engine.vehicles.keys():
+			key_report.append("%s(%s)" % [str(raw_key), type_string(typeof(raw_key))])
+
+		EraLog.truth(
+			"ERALIFE_ASSETS_KEYS|gs=%s|owner_keys=%s|player_id_type=%s|direct_lookup_rows=%d"
+			% [
+				str(_gs.get_instance_id()),
+				str(key_report),
+				type_string(typeof(_gs.player_id)),
+				_safe_array(_gs.vehicle_engine.vehicles.get(int(_gs.player_id), [])).size()
+			]
+		)
+
 	_ensure_surface()
 
 
