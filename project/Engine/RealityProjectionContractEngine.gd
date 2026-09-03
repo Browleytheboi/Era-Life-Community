@@ -1512,6 +1512,69 @@ func begin_resident_projection(
 			)
 		)
 
+		# FIX: _interactive_surface_contract_terminal_for_actor() validates ONLY
+		# actor_id -- not age, not world year. A surface built at age 0 therefore
+		# stayed "terminal" for that actor forever, so activities could keep
+		# reporting age 0 after the player aged to 13, and anything gated on
+		# actor.age (school eligibility, parent interaction options) read the same
+		# stale surface. This was always latent; the deck merge added in the pets
+		# work made it durable, because a stale surface is now retained across
+		# projection cycles instead of being overwritten by the next rebuild.
+		# Contracts already record "age" and "year", so compare them.
+		if persisted_contract_terminal:
+			var contract_age: int = int(
+				persisted_contract.get(
+					"age",
+					-1
+				)
+			)
+			var contract_year: int = int(
+				persisted_contract.get(
+					"year",
+					-1
+				)
+			)
+			var live_age: int = (
+				int(
+					actor.age
+				)
+				if actor != null
+				else -1
+			)
+			var live_year: int = (
+				int(
+					runtime.year
+				)
+				if runtime != null
+				else -1
+			)
+
+			if (
+				(
+					contract_age >= 0
+					and live_age >= 0
+					and contract_age != live_age
+				)
+				or (
+					contract_year >= 0
+					and live_year >= 0
+					and contract_year != live_year
+				)
+			):
+				EraLog.truth(
+					"ERALIFE_SURFACE_DECK_STALE|surface=%s|actor_id=%d|contract_age=%d|live_age=%d|contract_year=%d|live_year=%d"
+					% [
+						surface_id,
+						actor_id,
+						contract_age,
+						live_age,
+						contract_year,
+						live_year
+					]
+				)
+
+				persisted_contract_terminal = false
+
 		if persisted_contract_terminal:
 			validated_persisted_surface_deck [
 				surface_id

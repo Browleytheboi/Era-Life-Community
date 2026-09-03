@@ -137066,6 +137066,10 @@ func _begin_visible_age_up_runtime_from_button() -> void:
 	if gs.life_engine != null:
 		zero_frame_result = gs.life_engine.age_up()
 
+		# NOTE: the age-up re-projection lives in _deferred_run_age_up_from_button(),
+		# which is the live path. This function has ZERO callers -- verified by grep
+		# -- so anything placed here never runs.
+
 	if not zero_frame_result.is_empty():
 		loading_context ["zero_frame_age_up"] = bool(zero_frame_result.get("zero_frame_age_up", false))
 		loading_context ["target_year"] = int(zero_frame_result.get("target_year", zero_frame_result.get("year", visible_target_year)))
@@ -185828,6 +185832,72 @@ func _deferred_run_age_up_from_button() -> void:
 			)
 		)
 	)
+
+	# FIX: nothing re-projected the interactive main-tab surfaces after an age-up.
+	# begin_resident_projection()'s reuse branch returns the existing projection
+	# whenever the actor is unchanged, so the surface deck built at world start was
+	# served for the whole life. That is why activities still reported age 0 at
+	# thirteen, and why anything gated on actor.age -- school eligibility, parent
+	# interaction options -- kept offering infant content: ActivitiesContractEngine
+	# alone branches on int(actor.age) in five places, all reading the stale
+	# surface. force_rebuild was added by an earlier session with a comment
+	# predicting this ("anything acquired mid-life ... never reaches the UI") and
+	# was never given a caller. This is that caller.
+	#
+	# Placed in _deferred_run_age_up_from_button(), which _on_button_pressed()
+	# actually reaches. The same fix was first written into
+	# _begin_visible_age_up_runtime_from_button(), which has zero callers.
+	if (
+		not route_failed
+		and not age_result.is_empty()
+		and gs != null
+		and gs.player != null
+		and gs.reality_projection_contract_engine != null
+		and gs.reality_projection_contract_engine.has_method(
+			"begin_resident_projection"
+		)
+	):
+		var age_up_reprojection: Dictionary = (
+			MainSceneHelpers._safe_dictionary(
+				gs.reality_projection_contract_engine
+				.begin_resident_projection(
+					gs,
+					{
+						"force_rebuild": true,
+						"interactive_surfaces_only": true,
+						"source": "age_up_surface_refresh",
+						"ui_is_renderer_only": true
+					}
+				)
+			)
+		)
+
+		EraLog.truth(
+			"ERALIFE_AGE_UP_REPROJECTION|actor_id=%d|age=%d|year=%d|success=%s|reason=%s"
+			% [
+				int(
+					gs.player.id
+				),
+				int(
+					gs.player.age
+				),
+				int(
+					gs.year
+				),
+				str(
+					age_up_reprojection.get(
+						"success",
+						false
+					)
+				),
+				str(
+					age_up_reprojection.get(
+						"reason",
+						"-"
+					)
+				)
+			]
+		)
 
 	if (
 		intent_report.is_empty()
