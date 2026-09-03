@@ -695,7 +695,30 @@ static func create_resident_chassis_shell() -> GameState:
 	return chassis_runtime
 
 
+# Every GameState records where it was constructed. A load leaves several runtimes
+# alive at once and it has not been clear which one owns what -- this makes the set
+# enumerable instead of guessed at.
+var runtime_origin_tag: String = ""
+static var _runtime_birth_serial: int = 0
+
+
 func _init() -> void:
+	_runtime_birth_serial += 1
+	runtime_origin_tag = (
+		"chassis_shell#%d" % _runtime_birth_serial
+		if _resident_chassis_shell_construction_depth > 0
+		else "runtime#%d" % _runtime_birth_serial
+	)
+
+	EraLog.truth(
+		"ERALIFE_GS_BORN|id=%d|tag=%s|chassis_depth=%d"
+		% [
+			int(get_instance_id()),
+			runtime_origin_tag,
+			_resident_chassis_shell_construction_depth
+		]
+	)
+
 	if _resident_chassis_shell_construction_depth > 0:
 		return
 
@@ -17115,6 +17138,43 @@ func _enrich_current_life_checkpoint_resume_presentation(
 			main_tab_surface_contracts = (
 				direct_deck_raw as Dictionary
 			).duplicate(false)
+
+	# DIAGNOSTIC: this read produces tab_packets in the resume contract. Report the
+	# committing runtime's identity alongside what it found, so it can be compared
+	# against ERALIFE_SURFACE_DECK_PERSIST (which reports the runtime the projection
+	# engine wrote the deck to). Differing tags mean the deck is written to a
+	# different GameState than the one being saved.
+	EraLog.truth(
+		"ERALIFE_CHECKPOINT_CONTRACT_DECK_READ|gs=%d|tag=%s|actor_id=%d|found_keys=%s|by_actor_keys=%s|direct_keys=%s"
+		% [
+			int(
+				get_instance_id()
+			),
+			str(
+				runtime_origin_tag
+			),
+			actor_id,
+			str(
+				main_tab_surface_contracts.keys()
+			),
+			str(
+				_safe_dictionary(
+					scenario_state.get(
+						"resident_main_tab_surface_contracts_by_actor",
+						{}
+					)
+				).keys()
+			),
+			str(
+				_safe_dictionary(
+					scenario_state.get(
+						"resident_main_tab_surface_contracts",
+						{}
+					)
+				).keys()
+			)
+		]
+	)
 
 	var era_name: String = ""
 

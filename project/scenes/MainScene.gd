@@ -2233,6 +2233,62 @@ func _mod_menu_contract_is_renderable(
 			"section_rows"
 		)
 	)
+func _bind_resident_relationship_section_signal(
+	runtime: GameState
+) -> void:
+	if runtime == null:
+		return
+
+	var projection_engine = (
+		runtime.reality_projection_contract_engine
+	)
+
+	if projection_engine == null:
+		return
+
+	if not projection_engine.has_signal(
+		"resident_relationship_section_contract_ready"
+	):
+		return
+
+	var relationship_section_callback: Callable = Callable(
+		self,
+		"_on_resident_relationship_section_contract_ready"
+	)
+
+	if projection_engine.is_connected(
+		"resident_relationship_section_contract_ready",
+		relationship_section_callback
+	):
+		EraLog.truth(
+			"ERALIFE_SECTION_SIGNAL_BIND|tag=%s|result=already_connected"
+			% str(
+				runtime.runtime_origin_tag
+			)
+		)
+		return
+
+	projection_engine.connect(
+		"resident_relationship_section_contract_ready",
+		relationship_section_callback
+	)
+
+	EraLog.truth(
+		"ERALIFE_SECTION_SIGNAL_BIND|tag=%s|result=connected|signature=%s"
+		% [
+			str(
+				runtime.runtime_origin_tag
+			),
+			str(
+				runtime.scenario_state.get(
+					"reality_residency_signature",
+					""
+				)
+			) if typeof(runtime.scenario_state) == TYPE_DICTIONARY else ""
+		]
+	)
+
+
 func _capture_reality_residency_host() -> void:
 	if reality_residency_host_game_state == null:
 		reality_residency_host_game_state = gs
@@ -3279,6 +3335,27 @@ func _on_resident_relationship_section_contract_ready(
 		) != actor_id
 		or section_contract.is_empty()
 	):
+		# DIAGNOSTIC: the refresh drain reports pets contracts with cards=2 that
+		# never reach the panel. This handler is the only path between the two and
+		# it has three silent returns. Report each one.
+		EraLog.truth(
+			"ERALIFE_SECTION_READY_DROP|reason=entry_guard|section=%s|actor_id=%d|player_id=%d|gs_null=%s|contract_empty=%s"
+			% [
+				str(
+					section_id
+				),
+				actor_id,
+				int(
+					gs.player.id
+				) if (gs != null and gs.player != null) else -1,
+				str(
+					gs == null
+				),
+				str(
+					section_contract.is_empty()
+				)
+			]
+		)
 		return
 
 	var clean_signature: String = str(
@@ -3292,6 +3369,13 @@ func _on_resident_relationship_section_contract_ready(
 		clean_signature == ""
 		or clean_section_id == ""
 	):
+		EraLog.truth(
+			"ERALIFE_SECTION_READY_DROP|reason=blank_signature_or_section|section=%s|incoming=%s"
+			% [
+				clean_section_id,
+				clean_signature
+			]
+		)
 		return
 
 	var tracked_signature: String = str(
@@ -3308,13 +3392,47 @@ func _on_resident_relationship_section_contract_ready(
 		tracked_signature == ""
 		and attached_signature == ""
 	):
+		EraLog.truth(
+			"ERALIFE_SECTION_READY_DROP|reason=no_signature_known|section=%s|incoming=%s"
+			% [
+				clean_section_id,
+				clean_signature
+			]
+		)
 		return
 
 	if (
 		clean_signature != tracked_signature
 		and clean_signature != attached_signature
 	):
+		# DIAGNOSTIC: the emitting runtime's signature must match either the
+		# god-mode prewarm signature or the residency attached signature. After a
+		# checkpoint resume the attached signature is a "checkpoint:..." form, so a
+		# mismatch here silently discards a fully correct section contract.
+		EraLog.truth(
+			"ERALIFE_SECTION_READY_DROP|reason=signature_mismatch|section=%s|incoming=%s|tracked=%s|attached=%s"
+			% [
+				clean_section_id,
+				clean_signature,
+				tracked_signature,
+				attached_signature
+			]
+		)
 		return
+
+	EraLog.truth(
+		"ERALIFE_SECTION_READY_ACCEPTED|section=%s|incoming=%s|groups=%d"
+		% [
+			clean_section_id,
+			clean_signature,
+			MainSceneHelpers._safe_array(
+				section_contract.get(
+					"groups",
+					[]
+				)
+			).size()
+		]
+	)
 
 	var cached_contracts_raw: Variant = get_meta(
 		"resident_main_tab_surface_contracts",
@@ -3538,6 +3656,22 @@ func _on_resident_relationship_section_contract_ready(
 			int(
 				Time.get_ticks_msec()
 			)
+		)
+		EraLog.truth(
+			"ERALIFE_SECTION_READY_DROP|reason=rollback_rejected|section=%s|temporal=%s|stream=%s|incoming_year=%d|installed_year=%d|incoming_rev=%s|installed_rev=%s"
+			% [
+				clean_section_id,
+				str(
+					reject_temporal_rollback
+				),
+				str(
+					reject_stream_rollback
+				),
+				incoming_world_year,
+				installed_world_year,
+				incoming_revision,
+				installed_revision
+			]
 		)
 		return
 
@@ -8222,6 +8356,19 @@ func _adopt_attached_resident_game_state(
 	gs.scenario_state [
 		"runtime_never_unloads_for_lens_disconnect"
 	] = true
+
+	# REVERTED (build 66): reality_residency_signature was written here so that
+	# _runtime_signature() would return the checkpoint signature and the resident
+	# runtime's section contracts would pass the handler's signature check. It
+	# worked -- year-1071 pets reached the panel. But the rest of the hub is still
+	# year 79 (the god-mode prewarm world), and has_renderable_contract() requires
+	# observed_world_year == required_world_year, so the mixed-year panel gets
+	# blanked by prepare_observable_actor_shell(). Letting the correct pets data in
+	# is only safe once the whole hub projects from the resumed runtime.
+
+	_bind_resident_relationship_section_signal(
+		gs
+	)
 
 
 
@@ -17375,6 +17522,7 @@ func _build_current_save_slot_path() -> String:
 func _bootstrap_gs_for_save_load_if_needed() -> void:
 	if gs == null:
 		gs = GameState.new()
+		gs.runtime_origin_tag = "bootstrap_for_save_load"
 		gs.custom_mode = true
 		gs.custom_settings = (
 			_build_default_custom_settings()
@@ -23629,6 +23777,48 @@ func _present_attached_checkpoint_lens_now(
 			]
 		)
 
+	# CENSUS: enumerate every runtime reachable at this moment with its origin tag,
+	# graph size and vehicle store. Pets survive in some runtimes and not the one the
+	# relationships hub reads; this makes that set explicit rather than inferred.
+	if gs != null:
+		var census: Array = []
+
+		census.append(
+			"MAIN[%d|%s|edges=%d|vehicles=%d]"
+			% [
+				int(gs.get_instance_id()),
+				str(gs.runtime_origin_tag),
+				MainSceneHelpers._safe_dictionary(gs.canonical_relationship_graph.get("edges", {})).size(),
+				gs.vehicle_engine.vehicles.size() if gs.vehicle_engine != null else -1
+			]
+		)
+
+		if gs.reality_residency_manager != null:
+			for raw_signature in gs.reality_residency_manager.resident_records.keys():
+				var row: Dictionary = MainSceneHelpers._safe_dictionary(
+					gs.reality_residency_manager.resident_records.get(raw_signature, {})
+				)
+				var row_runtime = row.get("runtime_ref", null)
+
+				if not (row_runtime is GameState):
+					census.append("REC[%s|no_runtime]" % str(raw_signature))
+					continue
+
+				census.append(
+					"REC[%s|%d|%s|edges=%d|vehicles=%d]"
+					% [
+						str(raw_signature),
+						int(row_runtime.get_instance_id()),
+						str(row_runtime.runtime_origin_tag),
+						MainSceneHelpers._safe_dictionary(row_runtime.canonical_relationship_graph.get("edges", {})).size(),
+						row_runtime.vehicle_engine.vehicles.size() if row_runtime.vehicle_engine != null else -1
+					]
+				)
+
+		EraLog.truth(
+			"ERALIFE_RUNTIME_CENSUS|%s" % " ".join(census)
+		)
+
 	EraLog.truth(
 		"ERALIFE_LOAD_GRAPH_ADOPTED|applied=%s|live_edges=%d|source_gs=%d|source_edges=%d|manager=%s|attached=%s"
 		% [
@@ -23641,11 +23831,33 @@ func _present_attached_checkpoint_lens_now(
 		]
 	)
 
+	# REVERTED: invalidate_cached_section_surfaces() was called here to drop the
+	# panel's per-section surface cache after a load. It emptied the ENTIRE
+	# relationships hub -- no tabs, no sections -- because clearing the deck removes
+	# the built surfaces without anything republishing them. The cache is genuinely
+	# the reason stale pets show, but dropping it needs a rebuild to follow, and the
+	# panel does not republish on its own.
+
+	# REMOVED: request_attached_actor_projection_rebind() was called here to force a
+	# surface rebuild. Evidence says it makes things worse: with only the section
+	# refresh below, PET_CARDS_READ fired (reporting edges=0, before the graph was
+	# propagated). With the rebind added it stopped firing entirely -- the rebind
+	# erases the projection work and the queued section refresh goes with it. The
+	# graph now lives on the correct runtime (census: edges=4), so the section refresh
+	# alone should be able to produce a card.
+
 	# FIX: after a load the pets section never queries at all -- PET_CARDS_READ does
 	# not appear, where it does in a normal session. The relationship hub is serving
 	# surfaces built before the resume. This uses the narrow, purpose-built section
 	# refresh rather than the new-world reset that was tried here before and wiped
 	# stats and money: it touches only the relationship sections.
+	# REVERTED (build 67): begin_resident_projection(force_rebuild=true) was called
+	# here to re-project the whole relationships hub on the resumed runtime. It
+	# returned success=true but emitted NO relationships surface packet at the
+	# checkpoint signature -- only school. The hub stayed on year 79 while pets went
+	# to 1071, and the mixed-year state blanked the panel again. Do not repeat
+	# without first explaining why the relationships step never emits.
+
 	if (
 		gs != null
 		and gs.reality_projection_contract_engine != null
@@ -23674,6 +23886,25 @@ func _present_attached_checkpoint_lens_now(
 				str(pets_refresh.get("reason", "-"))
 			]
 		)
+
+		# Queue it again over the next few seconds. A single request during reattach
+		# can land before the hub is able to service it, and the queue drains on its
+		# own process_frame connection independent of the residency pump.
+		for retry_delay in [0.5, 1.5, 3.0]:
+			var retry_timer: SceneTreeTimer = get_tree().create_timer(retry_delay)
+			retry_timer.timeout.connect(
+				func () -> void:
+					if (
+						gs != null
+						and gs.player != null
+						and gs.reality_projection_contract_engine != null
+					):
+						gs.reality_projection_contract_engine.queue_resident_relationship_section_refresh(
+							int(gs.player.id),
+							["pets"],
+							{"source": "checkpoint_reattach_retry"}
+						)
+			)
 
 	# REVERTED: _reset_world_specific_ui_lens_state_for_new_world_seed() was called
 	# here to clear stale relationship-hub surfaces after a load. It is meant for
@@ -77612,6 +77843,7 @@ func _try_load_reality_capsule_from_browser_url() -> bool:
 
 	if gs == null:
 		gs = GameState.new()
+		gs.runtime_origin_tag = "reality_capsule_from_url"
 		gs.custom_mode = true
 		gs.custom_settings = _build_default_custom_settings()
 
@@ -116514,6 +116746,29 @@ func _continue_checkpoint_reality_surface_publication_tail(
 			)
 		)
 	)
+
+	# FIX: attach_report["checkpoint_resume_contract"] -- which is what reaches this
+	# tail -- does not carry main_tab_surface_contracts. RESUME_TRUTH reports
+	# tab_packets=5 because RealityResidencyManager measures its OWN surface_deck
+	# and writes it into resident_gs.scenario_state, not into the contract handed
+	# back through the attach report. So this stage saw deck_keys=[] on every
+	# surface and skipped all five installs, leaving the hub on the previous
+	# world's year-79 surfaces. _checkpoint_resume_published_main_tab_contracts_for_actor()
+	# reads exactly where the manager wrote it; it already exists for this purpose
+	# and had one caller, in the watchdog that runs only after publication has
+	# already failed to complete.
+	if (
+		surface_deck.is_empty()
+		and gs != null
+		and gs.player != null
+	):
+		surface_deck = (
+			_checkpoint_resume_published_main_tab_contracts_for_actor(
+				int(
+					gs.player.id
+				)
+			)
+		)
 	var stage_label: String = ""
 
 	match stage_index:
@@ -116569,6 +116824,36 @@ func _continue_checkpoint_reality_surface_publication_tail(
 			stage_label = (
 				"main_tab.%s"
 				% surface_id
+			)
+
+			# DIAGNOSTIC: RESUME_TRUTH reports relationship_cards_packet=true, but
+			# no RESUME_INSTALL line appears -- so the contract THIS code reads is
+			# not the one RealityResidencyManager measured. They are separate reads:
+			# the manager measures its own surface_deck, this reads
+			# resume_contract["main_tab_surface_contracts"]. Log unconditionally,
+			# ABOVE the is_empty() guard, so absence cannot be ambiguous.
+			EraLog.truth(
+				"ERALIFE_RESUME_PUBLISH_STAGE|signature=%s|stage_index=%d|surface=%s|deck_keys=%s|this_surface_empty=%s|resume_contract_keys=%d|deck_from_scenario_fallback=%s"
+				% [
+					clean_signature,
+					stage_index,
+					surface_id,
+					str(
+						surface_deck.keys()
+					),
+					str(
+						surface_contract.is_empty()
+					),
+					resume_contract.size(),
+					str(
+						MainSceneHelpers._safe_dictionary(
+							resume_contract.get(
+								"main_tab_surface_contracts",
+								{}
+							)
+						).is_empty()
+					)
+				]
 			)
 
 			if not surface_contract.is_empty():
@@ -153132,6 +153417,54 @@ func _install_checkpoint_resume_main_tab_surface_contract(
 
 	match clean_surface_id:
 		"relationships":
+			# DIAGNOSTIC: the resume contract now carries all five surfaces
+			# (tab_packets=5, relationship_cards_packet=true), but no year-1071 gate
+			# line appears after a load. This is the only place the resumed
+			# relationships surface is handed to the panel, so report what is
+			# actually being installed: the actor, the section count, and the pets
+			# section's own revision (which carries the world year).
+			EraLog.truth(
+				"ERALIFE_RESUME_INSTALL_RELATIONSHIPS|signature=%s|actor_id=%d|panel_exists=%s|sections=%d|active_section=%s|pets_rev=%s"
+				% [
+					clean_signature,
+					actor_id,
+					str(
+						relationship_hub_panel != null
+						and is_instance_valid(
+							relationship_hub_panel
+						)
+					),
+					MainSceneHelpers._safe_dictionary(
+						contract.get(
+							"section_contracts",
+							{}
+						)
+					).size(),
+					str(
+						contract.get(
+							"active_section_id",
+							"-"
+						)
+					),
+					str(
+						MainSceneHelpers._safe_dictionary(
+							MainSceneHelpers._safe_dictionary(
+								contract.get(
+									"section_contracts",
+									{}
+								)
+							).get(
+								"pets",
+								{}
+							)
+						).get(
+							"surface_revision",
+							"-"
+						)
+					)
+				]
+			)
+
 			_ensure_relationship_hub_panel()
 
 			if (
@@ -168259,6 +168592,7 @@ func _prewarm_god_mode_life_from_settings(settings: Dictionary, reason: String =
 			gs.custom_settings [raw_key] = candidate_settings.get(raw_key)
 
 	var prewarm_gs:= GameState.new()
+	prewarm_gs.runtime_origin_tag = "god_mode_prewarm"
 	prewarm_gs.custom_mode = true
 	prewarm_gs.awaiting_new_life = false
 	prewarm_gs.afterlife_active = false
@@ -179595,6 +179929,7 @@ func _ready():
 	process_mode = Node.PROCESS_MODE_ALWAYS
 
 	gs = GameState.new()
+	gs.runtime_origin_tag = "main_scene_ready"
 	_ensure_era_audio_engine()
 
 	gs.custom_mode = true

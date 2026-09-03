@@ -798,6 +798,14 @@ func emit_hub_contract(
 				"truth_state": "hot",
 				"projection_complete": true,
 				"authoritative_projection": true,
+				# NOTE: groups.size() is 1 for the "pets" section whether that single
+				# group holds 0 cards or 20, and _affection_signature() hashes
+				# actor.affection (humans only). This revision is therefore blind to
+				# pet content. Left AS-IS deliberately: the live post-load path is
+				# the resident/cooperative projection in _step_resident_hub_projection(),
+				# whose revision uses _resident_relationship_section_stream_signature().
+				# Fixing that one function covers the bug; changing this producer too
+				# was reverted while a crash is being bisected.
 				"surface_revision": (
 					"%d:%d:%s:%d:%s"
 					% [
@@ -1521,6 +1529,15 @@ func _resident_relationship_section_stream_signature(
 				raw_card
 			)
 
+			# FIX: pet and other entity cards carry no int "target_id" -- they are
+			# keyed by the String "target_entity_id" ("pet:3"). The old `target_id
+			# <= 0: continue` guard therefore skipped EVERY pet card, so this
+			# signature was byte-identical for a pets group holding 0 cards and one
+			# holding 2. The panel gates surface rebuilds solely on surface_revision
+			# (InstitutionHubPanelBase._service_next_section_surface_contract), so a
+			# correct contract carrying 2 restored pets was discarded as unchanged
+			# and the empty surface built during the load stayed on screen.
+			var card_key: String = ""
 			var target_id: int = int(
 				card.get(
 					"target_id",
@@ -1528,23 +1545,65 @@ func _resident_relationship_section_stream_signature(
 				)
 			)
 
-			if target_id <= 0:
+			if target_id > 0:
+				card_key = "person:%d" % target_id
+			else:
+				card_key = str(
+					card.get(
+						"target_entity_id",
+						""
+					)
+				).strip_edges()
+
+			if card_key == "":
 				continue
 
 			card_ids.append(
-				target_id
+				card_key
 			)
 
+			var age_raw: Variant = card.get(
+				"target_age",
+				-1
+			)
+			var age_value: int = -1
+
+			if (
+				typeof(
+					age_raw
+				) == TYPE_INT
+				or typeof(
+					age_raw
+				) == TYPE_FLOAT
+			):
+				age_value = int(
+					age_raw
+				)
+
+			var bond_raw: Variant = card.get(
+				"bond",
+				-1
+			)
+			var bond_value: int = -1
+
+			if (
+				typeof(
+					bond_raw
+				) == TYPE_INT
+				or typeof(
+					bond_raw
+				) == TYPE_FLOAT
+			):
+				bond_value = int(
+					bond_raw
+				)
+
 			card_revisions.append(
-				"%d:%d:%s"
+				"%s:%d:%d:%s"
 				% [
-					target_id,
-					int(
-						card.get(
-							"target_age",
-							-1
-						)
-					),
+					card_key,
+					age_value,
+					bond_value,
 					str(
 						card.get(
 							"signature",

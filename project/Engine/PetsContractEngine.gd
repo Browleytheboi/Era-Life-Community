@@ -318,6 +318,46 @@ func get_pet_cards_for_actor(
 	# DIAGNOSTIC: the acquisition tail confirms both relationship edges commit
 	# (owner_edge=true, household_edge=true), so if the tab still shows nothing the
 	# break is on the READ side. Report what this query actually resolved.
+	# FIX: this query runs on whichever runtime the relationships hub was built with,
+	# and after a load that can be a runtime whose graph is empty (graph_edges_total=0)
+	# while the player's runtime holds the edges. Rather than depend on which of the
+	# three runtimes this engine happens to hold, fall back to the residency manager's
+	# attached runtime when this one has no edges.
+	if gs != null and typeof(gs.canonical_relationship_graph) == TYPE_DICTIONARY:
+		var local_edges: int = _safe_dictionary(
+			gs.canonical_relationship_graph.get("edges", {})
+		).size()
+
+		if local_edges == 0 and gs.reality_residency_manager != null:
+			for raw_signature in gs.reality_residency_manager.resident_records.keys():
+				var record_row: Dictionary = _safe_dictionary(
+					gs.reality_residency_manager.resident_records.get(raw_signature, {})
+				)
+				var other_runtime = record_row.get("runtime_ref", null)
+
+				if not (other_runtime is GameState) or other_runtime == gs:
+					continue
+
+				if typeof(other_runtime.canonical_relationship_graph) != TYPE_DICTIONARY:
+					continue
+
+				if _safe_dictionary(other_runtime.canonical_relationship_graph.get("edges", {})).size() > 0:
+					gs.canonical_relationship_graph = (
+						other_runtime.canonical_relationship_graph.duplicate(true)
+					)
+
+					if typeof(other_runtime.entity_registry) == TYPE_DICTIONARY:
+						gs.entity_registry = other_runtime.entity_registry.duplicate(true)
+
+					EraLog.truth(
+						"ERALIFE_PET_GRAPH_BORROWED|from_gs=%d|to_gs=%d"
+						% [
+							int(other_runtime.get_instance_id()),
+							int(gs.get_instance_id())
+						]
+					)
+					break
+
 	# DIAGNOSTIC: anchor_cards=0 while the acquisition tail reported household_edge=true.
 	# Report UNFILTERED edge counts too, so we can tell whether the edges are missing
 	# from the graph entirely (rebuild wiped them) or present but not matching the
@@ -334,9 +374,10 @@ func get_pet_cards_for_actor(
 		).size()
 
 	EraLog.truth(
-		"ERALIFE_PET_CARDS_READ|gs=%d|graph_edges_total=%d|actor_id=%d|anchor_id=%d|read_only=%s|anchor_cards=%d|final_cards=%d|edges_actor=%d|edges_anchor=%d|source=%s"
+		"ERALIFE_PET_CARDS_READ|gs=%d|tag=%s|graph_edges_total=%d|actor_id=%d|anchor_id=%d|read_only=%s|anchor_cards=%d|final_cards=%d|edges_actor=%d|edges_anchor=%d|source=%s"
 		% [
 			int(gs.get_instance_id()),
+			str(gs.runtime_origin_tag),
 			_safe_dictionary(gs.canonical_relationship_graph.get("edges", {})).size(),
 			int(actor.id),
 			int(anchor.id),

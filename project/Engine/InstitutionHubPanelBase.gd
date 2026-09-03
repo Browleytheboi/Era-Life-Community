@@ -1695,16 +1695,65 @@ func _service_next_section_surface_contract() -> void:
 		)
 	)
 
+	# DIAGNOSTIC: this gate is the single point where a correct, freshly built
+	# section contract is discarded. It compares only surface_revision, so any
+	# producer whose revision string is blind to card content silently pins the
+	# surface that is already on screen. Reported ABOVE the guard -- inside it the
+	# skip is invisible, which is exactly how the pets-after-load bug hid.
+	var cached_revision: String = str(
+		section_surface_revision_by_id.get(
+			section_id,
+			""
+		)
+	)
+	var incoming_card_count: int = 0
+
+	for raw_group in _array(
+		section_contract.get(
+			"groups",
+			[]
+		)
+	):
+		incoming_card_count += _array(
+			_dict(
+				raw_group
+			).get(
+				"cards",
+				[]
+			)
+		).size()
+
+	EraLog.truth(
+		"ERALIFE_SECTION_SURFACE_GATE|panel=%s|section=%s|cached_rev=%s|incoming_rev=%s|deck_has=%s|incoming_cards=%d|action=%s"
+		% [
+			str(panel_kind),
+			section_id,
+			cached_revision,
+			revision,
+			str(
+				section_surface_deck.has(
+					section_id
+				)
+			),
+			incoming_card_count,
+			(
+				"skip"
+				if (
+					section_surface_deck.has(
+						section_id
+					)
+					and cached_revision == revision
+				)
+				else "rebuild"
+			)
+		]
+	)
+
 	if (
 		section_surface_deck.has(
 			section_id
 		)
-		and str(
-			section_surface_revision_by_id.get(
-				section_id,
-				""
-			)
-		) == revision
+		and cached_revision == revision
 	):
 		return
 
@@ -6102,6 +6151,26 @@ func _process(
 
 
 	animated_cards = retained_entries
+func invalidate_cached_section_surfaces(reason: String = "external") -> void:
+	# The panel caches one built surface per section and, on reopen, activates the
+	# cached one instead of rebuilding. After loading a save that cache belongs to the
+	# previous session: the pets contract produces cards (final_cards=2) but the panel
+	# keeps showing the deck it built before the load, with an empty install queue.
+	# Dropping the deck forces the next open to rebuild from the current contract.
+	_clear_section_surface_deck()
+	section_surface_revision_by_id.clear()
+
+	set_meta(
+		"active_section_surface_publication_pending",
+		true
+	)
+
+	EraLog.truth(
+		"ERALIFE_HUB_SURFACES_INVALIDATED|reason=%s|panel_kind=%s"
+		% [reason, str(panel_kind)]
+	)
+
+
 func _clear_section_surface_deck() -> void:
 	if section_surface_host != null:
 		_clear_children(section_surface_host)

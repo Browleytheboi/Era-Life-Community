@@ -4780,6 +4780,28 @@ func _checkpoint_resume_contract_from_payload(
 	}
 
 
+func _normalize_owner_keyed_store(raw_store: Variant) -> Dictionary:
+	# Owner-keyed stores (vehicles, belongings, properties, heirlooms) are keyed by
+	# actor id. A save/load round trip can bring those keys back as STRINGS, while
+	# every lookup uses an int -- so the store looks populated (vehicle_owner_rows=1)
+	# yet every get(actor_id) misses and the assets contract reports count:0. Coerce
+	# numeric keys back to int.
+	var normalized: Dictionary = {}
+
+	if typeof(raw_store) != TYPE_DICTIONARY:
+		return normalized
+
+	for raw_key in (raw_store as Dictionary).keys():
+		var value = (raw_store as Dictionary)[raw_key]
+
+		if typeof(raw_key) == TYPE_STRING and str(raw_key).is_valid_int():
+			normalized [int(str(raw_key))] = value
+		else:
+			normalized [raw_key] = value
+
+	return normalized
+
+
 func _materialize_checkpoint_resume_shell(
 	resident_gs: GameState,
 	resume_contract: Dictionary,
@@ -4820,22 +4842,22 @@ func _materialize_checkpoint_resume_shell(
 			resident_gs.heirloom_engine = HeirloomEngine.new(resident_gs)
 
 		if resident_gs.vehicle_engine != null and resume_registry.has("vehicles"):
-			resident_gs.vehicle_engine.vehicles = resume_registry.get("vehicles", {})
+			resident_gs.vehicle_engine.vehicles = _normalize_owner_keyed_store(resume_registry.get("vehicles", {}))
 			resume_restored.append("vehicles")
 
 		if resident_gs.belongings_engine != null and resume_registry.has("belongings"):
-			resident_gs.belongings_engine.belongings = resume_registry.get("belongings", {})
+			resident_gs.belongings_engine.belongings = _normalize_owner_keyed_store(resume_registry.get("belongings", {}))
 			resume_restored.append("belongings")
 
 		if resident_gs.property_engine != null and resume_registry.has("properties"):
-			resident_gs.property_engine.properties = resume_registry.get("properties", {})
+			resident_gs.property_engine.properties = _normalize_owner_keyed_store(resume_registry.get("properties", {}))
 			resume_restored.append("properties")
 
 			if resume_registry.has("used_addresses"):
 				resident_gs.property_engine.used_addresses = resume_registry.get("used_addresses", {})
 
 		if resident_gs.heirloom_engine != null and resume_registry.has("heirlooms"):
-			resident_gs.heirloom_engine.heirlooms = resume_registry.get("heirlooms", {})
+			resident_gs.heirloom_engine.heirlooms = _normalize_owner_keyed_store(resume_registry.get("heirlooms", {}))
 			resume_restored.append("heirlooms")
 
 	# FIX: pets stayed broken after a load -- existing ones did not come back and new
@@ -4882,8 +4904,83 @@ func _materialize_checkpoint_resume_shell(
 		% [resume_registry.size(), str(resume_restored)]
 	)
 
+	# What did the restore actually put on the runtime, and under which keys? The
+	# assets panel reports owner_keys=[] at bind time, so either the store is empty
+	# here too or something clears it between restore and bind.
+	if resident_gs.vehicle_engine != null and typeof(resident_gs.vehicle_engine.vehicles) == TYPE_DICTIONARY:
+		var written_keys: Array = []
+
+		for raw_key in resident_gs.vehicle_engine.vehicles.keys():
+			written_keys.append("%s(%s)" % [str(raw_key), type_string(typeof(raw_key))])
+
+		EraLog.truth(
+			"ERALIFE_RESUME_WROTE|gs=%d|vehicle_owner_keys=%s|contract_had_vehicles=%s"
+			% [
+				int(resident_gs.get_instance_id()),
+				str(written_keys),
+				str(resume_registry.has("vehicles"))
+			]
+		)
+
 	# Report the actual state of the resumed runtime rather than assuming which
 	# engines exist. Four attempts at the pet problem have guessed at this; measure it.
+	# FIX: the restore above lands on resident_gs -- the resumed chassis runtime -- but
+	# the UI reads a DIFFERENT GameState. The Assets panel's contract reports count:0
+	# while the restored runtime holds the vehicles, and the panel's Gs object id does
+	# not match the runtime the pet logs report. That is why properties (restored
+	# elsewhere) survive while vehicles and pets do not. Mirror the restore onto the
+	# manager's own runtime when they differ, so whichever one the UI reads has the
+	# data.
+	if gs != null and gs != resident_gs:
+		var mirrored: Array = []
+
+		if not resume_registry.is_empty():
+			if gs.vehicle_engine == null and resume_registry.has("vehicles"):
+				gs.vehicle_engine = VehicleEngine.new(gs)
+
+			if gs.belongings_engine == null and resume_registry.has("belongings"):
+				gs.belongings_engine = BelongingsEngine.new(gs)
+
+			if gs.property_engine == null and resume_registry.has("properties"):
+				gs.property_engine = PropertyEngine.new(gs)
+
+			if gs.heirloom_engine == null and resume_registry.has("heirlooms"):
+				gs.heirloom_engine = HeirloomEngine.new(gs)
+
+			if gs.vehicle_engine != null and resume_registry.has("vehicles"):
+				gs.vehicle_engine.vehicles = _normalize_owner_keyed_store(resume_registry.get("vehicles", {}))
+				mirrored.append("vehicles")
+
+			if gs.belongings_engine != null and resume_registry.has("belongings"):
+				gs.belongings_engine.belongings = _normalize_owner_keyed_store(resume_registry.get("belongings", {}))
+				mirrored.append("belongings")
+
+			if gs.property_engine != null and resume_registry.has("properties"):
+				gs.property_engine.properties = _normalize_owner_keyed_store(resume_registry.get("properties", {}))
+				mirrored.append("properties")
+
+				if resume_registry.has("used_addresses"):
+					gs.property_engine.used_addresses = resume_registry.get("used_addresses", {})
+
+			if gs.heirloom_engine != null and resume_registry.has("heirlooms"):
+				gs.heirloom_engine.heirlooms = _normalize_owner_keyed_store(resume_registry.get("heirlooms", {}))
+				mirrored.append("heirlooms")
+
+		if not resume_graph.is_empty():
+			gs.canonical_relationship_graph = resume_graph.duplicate(true)
+			mirrored.append("relationship_graph")
+
+		if resume_contract.has("entity_registry"):
+			gs.entity_registry = _dict(
+				resume_contract.get("entity_registry", {})
+			)
+			mirrored.append("entity_registry")
+
+		EraLog.truth(
+			"ERALIFE_RESUME_MIRRORED|to_player_runtime=%d|mirrored=%s"
+			% [int(gs.get_instance_id()), str(mirrored)]
+		)
+
 	EraLog.truth(
 		"ERALIFE_RESUME_RUNTIME|graph_engine=%s|pets_engine=%s|entity_count=%d|edge_count=%d|is_player_runtime=%s"
 		% [

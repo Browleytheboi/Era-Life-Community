@@ -1081,6 +1081,66 @@ func save_interactive_reality_checkpoint(
 			live_options
 		)
 	)
+
+	# FIX: commit_current_life_checkpoint_contract() does NOT attach the main-tab
+	# surface deck to the resume contract -- that is done by
+	# _enrich_current_life_checkpoint_resume_presentation(), which save_game()
+	# calls immediately after committing. The Save button does not route through
+	# save_game(); it calls commit directly, right here. So every interactive
+	# checkpoint was written with no main_tab_surface_contracts at all, and the
+	# resume reported tab_packets=0 / relationship_cards_packet=false regardless of
+	# what scenario_state held. With no relationships surface in the contract there
+	# was nothing to publish on resume, so the hub kept the previous world's
+	# surface -- which is why pets never appeared after a load.
+	#
+	# This must run BEFORE the summary cache write below, which serialises
+	# checkpoint_report["checkpoint_resume_contract"].
+	if gs.has_method(
+		"_enrich_current_life_checkpoint_resume_presentation"
+	):
+		checkpoint_report = _safe_dictionary(
+			gs._enrich_current_life_checkpoint_resume_presentation(
+				checkpoint_report,
+				live_options
+			)
+		)
+
+		var enriched_resume: Dictionary = _safe_dictionary(
+			checkpoint_report.get(
+				"checkpoint_resume_contract",
+				{}
+			)
+		)
+
+		EraLog.truth(
+			"ERALIFE_SAVE_ENRICH|path=%s|success=%s|tab_packets=%d|has_relationships=%s"
+			% [
+				clean_path,
+				str(
+					checkpoint_report.get(
+						"success",
+						false
+					)
+				),
+				_safe_dictionary(
+					enriched_resume.get(
+						"main_tab_surface_contracts",
+						{}
+					)
+				).size(),
+				str(
+					_safe_dictionary(
+						enriched_resume.get(
+							"main_tab_surface_contracts",
+							{}
+						)
+					).has(
+						"relationships"
+					)
+				)
+			]
+		)
+
 	save_report [
 		"reality_checkpoint_commit"
 	] = checkpoint_report.duplicate(false)
