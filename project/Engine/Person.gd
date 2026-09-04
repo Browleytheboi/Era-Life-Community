@@ -14,6 +14,19 @@ var first_name: String
 var last_name: String
 var gender: String
 var age: int = 0
+# Durable anchor for biological aging. Metas do NOT survive _deserialize_npc()
+# (dormancy reactivation) or a save/load, so the meta this used to rely on came
+# back absent and aging silently fell back to +1 per pass, losing every year an
+# NPC was not reached. A property round-trips automatically: _deserialize_npc()
+# copies any serialized key matching a property name.
+var last_biology_year: int = -1
+# Durable birth anchor. Unlike last_biology_year this is written ONCE and never
+# updated, so no aging site can mis-stamp it -- age becomes
+# target_year - birth_year rather than an accumulator that depends on every write
+# site agreeing and on the bounded drain reaching this NPC every year.
+# -1 means "not yet anchored"; the aging sites backfill it as
+# target_year - age on first contact.
+var birth_year: int = -1
 var children: Array = []
 var maiden_last_name: String = ""
 

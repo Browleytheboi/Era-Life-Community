@@ -1117,12 +1117,89 @@ func _step_world_age_npcs(
 				npc_key
 			] = previous_age
 
-		var expected_age: int = int(
-			started_ages.get(
-				npc_key,
-				previous_age
+		# FIX: aging advanced by exactly +1 per pass, so any year an NPC was not
+		# reached -- the aging drain is bounded and gets abandoned when a rapid
+		# age-up discards the walker mid-run -- was lost permanently. Aging 10
+		# years rapidly left a mother 6 years older instead of 10. Catch up by the
+		# number of years actually missed since this NPC was last aged, using the
+		# meta this loop already writes. A missed year now self-corrects on the
+		# next pass instead of silently disappearing.
+		# Age is DERIVED from birth_year, not accumulated. A missed year is not
+		# something to recover -- it cannot happen, because the answer does not
+		# depend on how many times the bounded drain reached this NPC. Backfill
+		# the anchor on first contact for NPCs created before the field existed
+		# (or by any of the dozen creation sites that do not set it).
+		# FIX (off-by-one): previous_age is the age BEFORE this year's advance,
+		# while target_year is the year being advanced INTO. Anchoring as
+		# target_year - previous_age therefore placed the birth a year too late and
+		# every derived age came out one short. The NPC was previous_age in
+		# target_year - 1, so that is the year the anchor must be computed from.
+		if int(npc.birth_year) <= 0:
+			npc.birth_year = (target_year - 1) - previous_age
+
+		var expected_age: int = clampi(
+			target_year - int(
+				npc.birth_year
+			),
+			0,
+			GameState.MAX_MORTAL_AGE
+		)
+
+		# Retained for diagnostics only; nothing derives age from it now.
+		var last_biology_year: int = -999999
+
+		if int(npc.last_biology_year) > 0:
+			last_biology_year = int(
+				npc.last_biology_year
 			)
-		) + 1
+
+		var years_elapsed: int = expected_age - previous_age
+
+		# DIAGNOSTIC: the task now completes every year, yet a parent stays frozen
+		# at a fixed age. expected_age comes from started_ages, which is meant to
+		# be a per-year snapshot reset at contract open. If it is NOT reset, this
+		# pins expected_age at the first recorded value forever and the else branch
+		# below counts the NPC as "aged" while writing nothing. Report the actual
+		# decision for priority NPCs.
+		if true:
+			EraLog.truth(
+				"ERALIFE_NPC_AGE_DECISION|npc_id=%s|target_year=%d|previous_age=%d|started_age=%d|expected_age=%d|years_elapsed=%d|birth_year=%d|last_bio_year=%d|had_started_entry=%s|branch=%s|site=primary|from_priority=%s"
+				% [
+					npc_key,
+					target_year,
+					previous_age,
+					int(
+						started_ages.get(
+							npc_key,
+							-1
+						)
+					),
+					expected_age,
+					years_elapsed,
+					int(npc.birth_year),
+					last_biology_year,
+					str(
+						started_ages.has(
+							npc_key
+						)
+					),
+					(
+						"advance"
+						if int(npc.age) < expected_age
+						else (
+							"correct_down"
+							if (
+								int(npc.age) > expected_age
+								and not allow_multi_year_jump
+							)
+							else "noop_counted_as_aged"
+						)
+					),
+					str(
+						selected_from_priority
+					)
+				]
+			)
 
 		if int(npc.age) < expected_age:
 			npc.age = expected_age
@@ -1160,6 +1237,30 @@ func _step_world_age_npcs(
 					0
 				)
 			) + 1
+
+		# FIX: relationship cards and profiles do NOT read Person.age -- they read
+		# the snapshot stored in gs.entity_registry by ensure_person_entity(), which
+		# is only written when an entity or graph event is created. Nothing
+		# re-snapshotted it as NPCs aged, so a mother whose Person correctly
+		# advanced still displayed the age she had when the relationship was formed
+		# (frozen at 26, at 32, and so on). Re-snapshot here, where we have the npc
+		# and know its age just changed. ensure_person_entity() overwrites the
+		# registry entry, so this refreshes age, alive and stats together.
+		if (
+			int(npc.age) != previous_age
+			and gs.relationship_graph_contract_engine != null
+			and gs.relationship_graph_contract_engine.has_method(
+				"ensure_person_entity"
+			)
+		):
+			gs.relationship_graph_contract_engine.ensure_person_entity(
+				npc,
+				{
+					"source": "world_engine.age_npcs"
+				}
+			)
+
+		npc.last_biology_year = target_year
 
 		if npc.has_method(
 			"set_meta"
@@ -3264,10 +3365,47 @@ func age_npcs(context: Dictionary = {}) -> Dictionary:
 
 		var previous_age: int = int(npc.age)
 		var npc_key: String = str(int(npc.id))
-		var expected_age: int = previous_age + 1
 
-		if started_npc_ages.has(npc_key):
-			expected_age = int(started_npc_ages.get(npc_key, previous_age)) + 1
+		# Same derivation as the primary site. This site previously advanced by a
+		# flat +1 regardless of elapsed years; both sites now compute the same
+		# answer from the same anchor, so it no longer matters which one handles a
+		# given NPC.
+		# Same off-by-one correction as the primary site: the NPC was previous_age
+		# in target_year - 1, not in target_year.
+		if int(npc.birth_year) <= 0:
+			npc.birth_year = (target_year - 1) - previous_age
+
+		var expected_age: int = clampi(
+			target_year - int(npc.birth_year),
+			0,
+			GameState.MAX_MORTAL_AGE
+		)
+		var site_years_elapsed: int = expected_age - previous_age
+		var site_last_biology_year: int = int(npc.last_biology_year)
+
+		EraLog.truth(
+			"ERALIFE_NPC_AGE_DECISION|npc_id=%s|target_year=%d|previous_age=%d|started_age=%d|expected_age=%d|years_elapsed=%d|birth_year=%d|last_bio_year=%d|had_started_entry=%s|branch=%s|site=secondary"
+			% [
+				npc_key,
+				target_year,
+				previous_age,
+				int(started_npc_ages.get(npc_key, -1)),
+				expected_age,
+				site_years_elapsed,
+				int(npc.birth_year),
+				site_last_biology_year,
+				str(started_npc_ages.has(npc_key)),
+				(
+					"advance"
+					if previous_age < expected_age
+					else (
+						"correct_down"
+						if (previous_age > expected_age and not allow_multi_year_jump)
+						else "noop"
+					)
+				)
+			]
+		)
 
 		if int(npc.age) < expected_age:
 			npc.age = expected_age
@@ -3283,6 +3421,10 @@ func age_npcs(context: Dictionary = {}) -> Dictionary:
 		if npc.has_method("set_meta"):
 			npc.set_meta("last_temporal_biology_year", target_year)
 			npc.set_meta("last_world_engine_biology_year", target_year)
+
+		# Keep the durable anchor in step with this second aging site too,
+		# otherwise an NPC aged here would look un-aged to the catch-up path.
+		npc.last_biology_year = target_year
 
 		if _should_emit_npc_age_event(npc, previous_age, int(npc.age)):
 			_emit_npc_age_event(npc, previous_age, int(npc.age), target_year)

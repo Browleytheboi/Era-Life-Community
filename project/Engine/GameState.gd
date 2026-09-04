@@ -14516,6 +14516,8 @@ func _merge_body_runtime_context(base: Dictionary, patch: Dictionary) -> Diction
 func _serialize_npc(npc: Person) -> Dictionary:
 	return {
 		"id": npc.id,
+		"last_biology_year": int(npc.last_biology_year),
+		"birth_year": int(npc.birth_year),
 		"name": npc.name,
 		"first_name": npc.first_name,
 		"last_name": npc.last_name,

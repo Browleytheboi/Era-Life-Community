@@ -1531,9 +1531,39 @@ func _ensure_age_up_time_contract_open(reason: String = "age_up_time_contract_op
 		var existing_source_age: int = int(existing_contract.get("source_age", gs.player.age))
 		var existing_target_age: int = int(existing_contract.get("target_age", existing_source_age + 1))
 
-		var existing_contract_still_safe: bool = int(gs.year) <= existing_target_year and int(gs.player.age) <= existing_target_age
+		# FIX: this was `<=` on both comparisons, so a contract that had ALREADY
+		# been fulfilled counted as still safe. After a completed age-up
+		# gs.player.age == existing_target_age exactly, so the spent contract was
+		# handed back and the next age-up re-committed the age the player already
+		# was -- the reported "stayed 5 for two years". The `target_age <=
+		# source_age` guards in the two writers do not catch it because they
+		# compare against the CONTRACT's stale source_age, not the live age. The
+		# same stale contract is what lets the two writers disagree about the
+		# current age and skip one (5, 5, 6, 8). A contract is only still open
+		# while the world has not yet reached its target.
+		var existing_contract_still_safe: bool = (
+			int(gs.year) < existing_target_year
+			and int(gs.player.age) < existing_target_age
+		)
+
 		if existing_contract_still_safe:
 			return existing_contract.duplicate(true)
+
+		EraLog.truth(
+			"ERALIFE_AGE_UP_CONTRACT_CLOSED|reason=%s|source_age=%d|target_age=%d|live_age=%d|source_year=%d|target_year=%d|live_year=%d|fulfilled=%s"
+			% [
+				reason,
+				existing_source_age,
+				existing_target_age,
+				int(gs.player.age),
+				existing_source_year,
+				existing_target_year,
+				int(gs.year),
+				str(
+					int(gs.player.age) >= existing_target_age
+				)
+			]
+		)
 
 		gs.scenario_state ["age_up_contract_open"] = false
 		gs.scenario_state ["age_up_contract_stale_closed"] = {
@@ -2142,12 +2172,34 @@ func resolve_age_up_intent(
 	var expected_age: int = source_age + 1
 	var corrected_double_advance: bool = false
 
+	EraLog.truth(
+		"ERALIFE_AGE_INTENT|source_age=%d|expected_age=%d|committed_age=%d|source_year=%d|expected_year=%d|committed_year=%d"
+		% [
+			source_age,
+			expected_age,
+			committed_age,
+			source_year,
+			expected_year,
+			committed_year
+		]
+	)
+
 	if committed_year > expected_year:
 		gs.year = expected_year
 		committed_year = expected_year
 		corrected_double_advance = true
 
 	if committed_age > expected_age:
+		EraLog.truth(
+			"ERALIFE_AGE_WRITE|writer=resolve_age_up_intent_double_advance_correction|from=%d|to=%d|source_age=%d|expected_age=%d"
+			% [
+				committed_age,
+				expected_age,
+				source_age,
+				expected_age
+			]
+		)
+
 		actor.age = expected_age
 		committed_age = expected_age
 		corrected_double_advance = true
@@ -2542,6 +2594,23 @@ func _commit_zero_frame_age_up_visible_time(
 
 	if contract_advances_year:
 		gs.year = target_year
+
+	EraLog.truth(
+		"ERALIFE_AGE_WRITE|writer=_commit_zero_frame_age_up_visible_time|reason=%s|from=%d|to=%d|source_age=%d|source_year=%d|target_year=%d|live_year=%d|gs=%d|tag=%s|player=%d|player_id=%d"
+		% [
+			reason,
+			int(gs.player.age),
+			target_age,
+			source_age,
+			source_year,
+			target_year,
+			int(gs.year),
+			int(gs.get_instance_id()),
+			str(gs.runtime_origin_tag),
+			int(gs.player.get_instance_id()),
+			int(gs.player.id)
+		]
+	)
 
 	gs.player.age = target_age
 
@@ -4545,6 +4614,23 @@ func force_complete_nonvisible_age_up_transaction(reason: String = "remote_shell
 		if not gs.year_locked:
 			gs.year = target_year
 
+		EraLog.truth(
+			"ERALIFE_AGE_WRITE|writer=force_complete_nonvisible_age_up_transaction|reason=%s|from=%d|to=%d|source_age=%d|source_year=%d|target_year=%d|live_year=%d|gs=%d|tag=%s|player=%d|player_id=%d"
+			% [
+				reason,
+				int(gs.player.age),
+				target_age,
+				started_from_age,
+				started_from_year,
+				target_year,
+				int(gs.year),
+				int(gs.get_instance_id()),
+				str(gs.runtime_origin_tag),
+				int(gs.player.get_instance_id()),
+				int(gs.player.id)
+			]
+		)
+
 		gs.player.age = target_age
 
 		if gs.player.has_method("set_meta"):
@@ -4685,6 +4771,23 @@ func _ensure_age_up_time_truth_committed(
 
 	if not year_locked_active:
 		gs.year = target_year
+
+	EraLog.truth(
+		"ERALIFE_AGE_WRITE|writer=_ensure_age_up_time_truth_committed|reason=%s|from=%d|to=%d|source_age=%d|source_year=%d|target_year=%d|live_year=%d|gs=%d|tag=%s|player=%d|player_id=%d"
+		% [
+			reason,
+			int(gs.player.age),
+			target_age,
+			started_from_age,
+			started_from_year,
+			target_year,
+			int(gs.year),
+			int(gs.get_instance_id()),
+			str(gs.runtime_origin_tag),
+			int(gs.player.get_instance_id()),
+			int(gs.player.id)
+		]
+	)
 
 	gs.player.age = target_age
 
@@ -6327,6 +6430,17 @@ func _advance_year_and_handle_era_shift(actor_for_narrative: Person = null) -> v
 
 	var turn_subject: Person = gs.player if gs.player != null else actor_for_narrative
 	if turn_subject != null and turn_subject.alive:
+		EraLog.truth(
+			"ERALIFE_AGE_WRITE|writer=life_engine_contract_turn|from=%d|to=%d|target_year=%d|live_year=%d|is_player=%s"
+			% [
+				int(turn_subject.age),
+				target_age,
+				target_year,
+				int(gs.year),
+				str(turn_subject == gs.player)
+			]
+		)
+
 		turn_subject.age = target_age
 
 	if gs.event_bus != null:

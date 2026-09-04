@@ -185317,6 +185317,100 @@ func _on_button_pressed() -> void:
 		Engine.get_process_frames()
 	)
 
+	# AGE-UP TRANSITION LOCK.
+	#
+	# The existing guards cover only the INTENT (the LifeEngine transaction that
+	# commits year and age), which finishes in a frame or two. The projection
+	# rebuild that follows takes ~90 frames, and the button was free the whole
+	# time -- so rapid presses started overlapping rebuilds, and force_rebuild
+	# erases in-flight work, leaving the hub permanently blank. Every attempt to
+	# fix that downstream (builds 93, 101) left a window.
+	#
+	# Established from ERALIFE_AGE_UP_BOUNDARY over 10 unhurried age-ups:
+	#   - intent_committed and pump_finished occur exactly once per year, in order
+	#   - the pump takes 88-95 frames; presses arrive 135-370 frames apart
+	#   - walker_cleared fired only 2 times in 10 years
+	#
+	# so the lock is released by the PUMP, never by the walker (waiting on the
+	# walker would hang 8 years in 10), and at a normal pace it never engages.
+	#
+	# NOT reusing age_up_transition_busy: 83 sites clear that flag and exactly one
+	# sets it, so it is false on the normal path and would gate nothing.
+	var age_up_lock_frame: int = int(
+		get_meta(
+			"age_up_transition_lock_frame",
+			-1
+		)
+	)
+	var age_up_locked: bool = (
+		bool(
+			get_meta(
+				"age_up_transition_lock",
+				false
+			)
+		)
+		and age_up_lock_frame >= 0
+	)
+
+	# Escape hatch: a stuck lock means a dead age-up button, which is worse than
+	# the stale panel this replaces. This codebase has a track record of flags
+	# nothing clears (force_rebuild with no caller, reality_residency_signature
+	# never written, age_up_transition_busy with 83 clears and one set), so the
+	# lock self-releases well past the observed 95-frame worst case.
+	if (
+		age_up_locked
+		and age_up_input_frame_id - age_up_lock_frame > 600
+	):
+		EraLog.truth(
+			"ERALIFE_AGE_UP_LOCK|action=force_released|held_frames=%d|reason=exceeded_cap"
+			% [
+				age_up_input_frame_id - age_up_lock_frame
+			]
+		)
+
+		set_meta(
+			"age_up_transition_lock",
+			false
+		)
+		age_up_locked = false
+
+	if age_up_locked:
+		# same_frame_as_last distinguishes a genuine second press from the handler
+		# being invoked twice for ONE press. Every decline in the lock test logged
+		# exactly twice with identical held_frames, so the handler is running twice
+		# per press. Outside a lock the only thing catching that is the same-frame
+		# check below -- if the two invocations ever straddle a frame boundary,
+		# one press would commit TWO age-ups, which looks exactly like the skipped
+		# years reported earlier.
+		EraLog.truth(
+			"ERALIFE_AGE_UP_LOCK|action=press_declined|held_frames=%d|year=%d|age=%d|frame=%d|same_frame_as_last=%s"
+			% [
+				age_up_input_frame_id - age_up_lock_frame,
+				int(
+					gs.year
+				),
+				int(
+					gs.player.age
+				),
+				age_up_input_frame_id,
+				str(
+					int(
+						get_meta(
+							"age_up_last_declined_frame",
+							-1
+						)
+					) == age_up_input_frame_id
+				)
+			]
+		)
+
+		set_meta(
+			"age_up_last_declined_frame",
+			age_up_input_frame_id
+		)
+
+		return
+
 	if (
 		bool(
 			get_meta(
@@ -185607,6 +185701,268 @@ func _deferred_run_afterlife_age_up_from_button() -> void:
 	set_meta("age_up_transition_busy", false)
 
 
+func _request_age_up_projection_refresh() -> bool:
+	# Returns true only if a pump was actually started. The caller holds the
+	# age-up transition lock at this point, and the lock's sole release is
+	# _finish_age_up_projection_pump() -- so if no pump starts, nothing would ever
+	# release it and the button would stay dead until the 600-frame cap. That is
+	# the year-92 case in the boundary log: an intent_committed with no matching
+	# pump_finished.
+	# Coalescing entry point for the post-age-up surface rebuild.
+	#
+	# begin_resident_projection(force_rebuild) ERASES the existing projection work
+	# and starts a new one. The relationships step needs ~130 frames to finish, so
+	# aging up faster than that would erase an in-flight rebuild and restart it
+	# from scratch -- age up rapidly enough and no rebuild ever completes, leaving
+	# the hub permanently stale (the original bug, reintroduced under load).
+	#
+	# So: at most one rebuild is ever in flight. A request that arrives while one
+	# is running does not erase it; it sets a dirty flag, and exactly one further
+	# rebuild runs when the current one finishes. That collapses any number of
+	# rapid age-ups into a single trailing refresh against the latest state, which
+	# is what the UI actually needs.
+	if (
+		gs == null
+		or gs.player == null
+		or gs.reality_projection_contract_engine == null
+		or not gs.reality_projection_contract_engine.has_method(
+			"begin_resident_projection"
+		)
+	):
+		return false
+
+	# COALESCING REVERTED (builds 93/101). One-rebuild-in-flight was the right
+	# idea but every version of it had a window: a request arriving between the
+	# flag being cleared and the next pump starting began a second rebuild, and
+	# force_rebuild erases in-flight work, so the hub ended up permanently blank.
+	# Reverted to the build-92 behaviour -- each age-up starts a rebuild, a rapid
+	# burst can starve one, and the next unhurried age-up recovers it. Stale beats
+	# blank.
+	#
+	# The correct fix is an age-up transition lock at the BUTTON, not mutual
+	# exclusion down here. Note that `age_up_transition_busy` cannot be reused for
+	# it: 83 sites clear that flag and exactly one sets it (inside the
+	# awaiting_new_life branch), so it is false on the normal path. A real lock
+	# must be introduced and cleared from ONE place. The ERALIFE_AGE_UP_BOUNDARY
+	# lines below exist to establish whether its release condition can depend on
+	# the walker clearing -- see the handoff notes.
+
+	# FIX (reentrancy): the flag used to be set AFTER begin_resident_projection()
+	# returned and after the first pump pass was kicked. An age-up arriving inside
+	# that window -- which happens because _finish_age_up_projection_pump() used to
+	# call this function inline from the pump's own callback chain -- saw
+	# pump_active false and started a SECOND rebuild, erasing the first's in-flight
+	# work. The log showed it as two consecutive deferred=false lines (age 10 then
+	# age 11) and a final rebuild at year 99 with no matching AGE_UP_PUMP line: it
+	# started and was immediately erased. Claim the flag first; release it if the
+	# rebuild does not actually start.
+	var age_up_reprojection: Dictionary = (
+		MainSceneHelpers._safe_dictionary(
+			gs.reality_projection_contract_engine
+			.begin_resident_projection(
+				gs,
+				{
+					"force_rebuild": true,
+					"interactive_surfaces_only": true,
+					"source": "age_up_surface_refresh",
+					"ui_is_renderer_only": true
+				}
+			)
+		)
+	)
+
+	var reprojection_signature: String = str(
+		age_up_reprojection.get(
+			"signature",
+			""
+		)
+	).strip_edges()
+
+	EraLog.truth(
+		"ERALIFE_AGE_UP_REPROJECTION|actor_id=%d|age=%d|year=%d|success=%s|reason=%s|signature=%s|deferred=false"
+		% [
+			int(
+				gs.player.id
+			),
+			int(
+				gs.player.age
+			),
+			int(
+				gs.year
+			),
+			str(
+				age_up_reprojection.get(
+					"success",
+					false
+				)
+			),
+			str(
+				age_up_reprojection.get(
+					"reason",
+					"-"
+				)
+			),
+			reprojection_signature
+		]
+	)
+
+	if (
+		not bool(
+			age_up_reprojection.get(
+				"success",
+				false
+			)
+		)
+		or reprojection_signature == ""
+	):
+		return false
+
+	_drive_age_up_projection_pump(
+		reprojection_signature,
+		0
+	)
+
+	return true
+
+
+func _finish_age_up_projection_pump(
+	signature: String,
+	result: String,
+	passes: int,
+	reason: String = "-"
+) -> void:
+	# BOUNDARY 3 of 3: the projection rebuild is finished. See
+	# ERALIFE_AGE_UP_BOUNDARY at the button commit and at walker clear.
+	# Sole release point for the age-up transition lock.
+	set_meta(
+		"age_up_transition_lock",
+		false
+	)
+
+	EraLog.truth(
+		"ERALIFE_AGE_UP_BOUNDARY|stage=pump_finished|year=%d|age=%d|result=%s|passes=%d|reason=%s|signature=%s"
+		% [
+			int(
+				gs.year
+			) if gs != null else -1,
+			int(
+				gs.player.age
+			) if (gs != null and gs.player != null) else -1,
+			result,
+			passes,
+			reason,
+			signature
+		]
+	)
+
+
+func _drive_age_up_projection_pump(
+	signature: String,
+	pass_index: int
+) -> void:
+	# Steps the freshly rebuilt projection one quantum per frame until it reports
+	# complete. Bounded: the relationships surface needs ~25 quanta, so 600 passes
+	# is generous while still guaranteeing the pump cannot run forever if the work
+	# can never finish.
+	if (
+		gs == null
+		or gs.reality_projection_contract_engine == null
+		or signature == ""
+		or pass_index >= 600
+	):
+		_finish_age_up_projection_pump(
+			signature,
+			(
+				"abandoned_at_cap"
+				if pass_index >= 600
+				else "runtime_unavailable"
+			),
+			pass_index
+		)
+
+		return
+
+	if not gs.reality_projection_contract_engine.has_method(
+		"step_resident_projection"
+	):
+		_finish_age_up_projection_pump(
+			signature,
+			"step_method_missing",
+			pass_index
+		)
+
+		return
+
+	var step_status: Dictionary = MainSceneHelpers._safe_dictionary(
+		gs.reality_projection_contract_engine.step_resident_projection(
+			signature,
+			1,
+			2
+		)
+	)
+
+	var projection_complete: bool = bool(
+		step_status.get(
+			"complete",
+			step_status.get(
+				"is_complete",
+				false
+			)
+		)
+	)
+
+	if projection_complete:
+		_finish_age_up_projection_pump(
+			signature,
+			"complete",
+			pass_index
+		)
+
+		return
+
+	if not bool(
+		step_status.get(
+			"success",
+			true
+		)
+	):
+		_finish_age_up_projection_pump(
+			signature,
+			"step_failed",
+			pass_index,
+			str(
+				step_status.get(
+					"reason",
+					"-"
+				)
+			)
+		)
+
+		return
+
+	var tree: SceneTree = get_tree()
+
+	if tree == null:
+		_finish_age_up_projection_pump(
+			signature,
+			"no_scene_tree",
+			pass_index
+		)
+
+		return
+
+	tree.process_frame.connect(
+		Callable(
+			self,
+			"_drive_age_up_projection_pump"
+		).bind(
+			signature,
+			pass_index + 1
+		),
+		CONNECT_ONE_SHOT
+	)
+
+
 func _deferred_run_age_up_from_button() -> void:
 	if (
 		gs == null
@@ -185850,54 +186206,59 @@ func _deferred_run_age_up_from_button() -> void:
 	if (
 		not route_failed
 		and not age_result.is_empty()
-		and gs != null
-		and gs.player != null
-		and gs.reality_projection_contract_engine != null
-		and gs.reality_projection_contract_engine.has_method(
-			"begin_resident_projection"
-		)
 	):
-		var age_up_reprojection: Dictionary = (
-			MainSceneHelpers._safe_dictionary(
-				gs.reality_projection_contract_engine
-				.begin_resident_projection(
-					gs,
-					{
-						"force_rebuild": true,
-						"interactive_surfaces_only": true,
-						"source": "age_up_surface_refresh",
-						"ui_is_renderer_only": true
-					}
-				)
-			)
-		)
-
+		# BOUNDARY 1 of 3: the age-up intent has committed year and age. Everything
+		# after this -- walker lanes, projection rebuild -- runs across later
+		# frames while the button is already free to fire again. That is the
+		# sequencing question the lock has to answer.
 		EraLog.truth(
-			"ERALIFE_AGE_UP_REPROJECTION|actor_id=%d|age=%d|year=%d|success=%s|reason=%s"
+			"ERALIFE_AGE_UP_BOUNDARY|stage=intent_committed|year=%d|age=%d|frame=%d"
 			% [
 				int(
-					gs.player.id
+					gs.year
 				),
 				int(
 					gs.player.age
 				),
 				int(
-					gs.year
-				),
-				str(
-					age_up_reprojection.get(
-						"success",
-						false
-					)
-				),
-				str(
-					age_up_reprojection.get(
-						"reason",
-						"-"
-					)
+					Engine.get_process_frames()
 				)
 			]
 		)
+
+		# Claim the transition lock. Released ONLY in
+		# _finish_age_up_projection_pump(), which every pump exit path routes
+		# through, or by the frame cap in _on_button_pressed().
+		set_meta(
+			"age_up_transition_lock",
+			true
+		)
+		set_meta(
+			"age_up_transition_lock_frame",
+			int(
+				Engine.get_process_frames()
+			)
+		)
+
+		# Release immediately if no pump started -- otherwise the lock's only
+		# release path never runs and the button is dead until the frame cap.
+		if not _request_age_up_projection_refresh():
+			set_meta(
+				"age_up_transition_lock",
+				false
+			)
+
+			EraLog.truth(
+				"ERALIFE_AGE_UP_LOCK|action=released_no_pump|year=%d|age=%d"
+				% [
+					int(
+						gs.year
+					),
+					int(
+						gs.player.age
+					)
+				]
+			)
 
 	if (
 		intent_report.is_empty()

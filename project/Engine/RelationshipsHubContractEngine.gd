@@ -978,7 +978,12 @@ func _resident_relationship_group_quantum_count(
 		"descendants":
 			return 3
 		"dead":
-			return 6
+			# 7 not 6: adds the "Dead Pets" lane. This count is the streaming
+			# contract -- the projection emits one group per quantum and marks the
+			# section complete at this number, so it MUST match the number of
+			# groups the two builders below actually produce. Change all three
+			# together or the section stalls or truncates.
+			return 7
 		"social":
 			return 3
 		"exes":
@@ -1427,6 +1432,11 @@ func _resident_relationship_group_quantum(
 						{
 							"section_key": "dead"
 						},
+						context
+					)
+				6:
+					return _dead_pet_group_contract(
+						actor,
 						context
 					)
 
@@ -7607,6 +7617,12 @@ func _hub_group_contracts(
 					context
 				)
 			)
+			groups.append(
+				_dead_pet_group_contract(
+					actor,
+					context
+				)
+			)
 
 		"social":
 			groups.append(
@@ -13195,6 +13211,17 @@ func _pet_group_contract(
 					raw_card as Dictionary
 				).duplicate(false)
 
+				# Dead pets belong to the "Dead Pets" lane in the dead section
+				# (_dead_pet_group_contract). Without this filter they would render
+				# in both places.
+				if not bool(
+					pet_card.get(
+						"alive",
+						true
+					)
+				):
+					continue
+
 				var target_entity: Dictionary = (
 					_shallow_dictionary(
 						pet_card.get(
@@ -16021,3 +16048,63 @@ func _array(
 		).duplicate(false)
 
 	return []
+
+func _dead_pet_group_contract(
+	actor: Person,
+	context: Dictionary = {}
+) -> Dictionary:
+	# Dead pets cannot go through emit_group_contract() -- that takes person ids
+	# and resolves them via _filter_person_ids_by_alive(). Pets are graph entities,
+	# so this mirrors _pet_group_contract()'s "entity_group" shape instead.
+	#
+	# Aliveness is derived in PetsContractEngine._refresh_owned_animal_lifecycles()
+	# before any card is built, so the "alive" flag on these cards is already
+	# authoritative by the time we filter on it here.
+	var dead_rows: Array = []
+
+	if (
+		gs != null
+		and gs.pets_contract_engine != null
+		and gs.pets_contract_engine.has_method(
+			"get_pet_cards_for_actor"
+		)
+	):
+		var pet_context: Dictionary = context.duplicate(false)
+
+		pet_context["source"] = "relationships_hub_contract_engine.dead_pet_group"
+		pet_context["projection_read_only"] = true
+		pet_context["seed_if_missing"] = false
+		pet_context["ui_is_renderer_only"] = true
+
+		var raw_rows: Variant = (
+			gs.pets_contract_engine.get_pet_cards_for_actor(
+				actor,
+				pet_context
+			)
+		)
+
+		if typeof(raw_rows) == TYPE_ARRAY:
+			for raw_card in (raw_rows as Array):
+				if typeof(raw_card) != TYPE_DICTIONARY:
+					continue
+
+				var pet_card: Dictionary = (
+					raw_card as Dictionary
+				).duplicate(false)
+
+				if bool(pet_card.get("alive", true)):
+					continue
+
+				dead_rows.append(pet_card)
+
+	return {
+		"row_kind": "entity_group",
+		"title": "Dead Pets",
+		"subtitle": "Companions who have passed.",
+		"cards": dead_rows,
+		"columns": 3,
+		"empty_text": "None.",
+		"projection_read_only": true,
+		"seed_if_missing": false,
+		"ui_is_renderer_only": true
+	}

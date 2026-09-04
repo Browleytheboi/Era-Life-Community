@@ -660,6 +660,16 @@ func create_animal_entity(
 		"sex": gender,
 		"age": age_years,
 		"age_years": age_years,
+		# Birth anchor. Pets had NO aging path at all -- nothing in the yearly tick
+		# touched them, so a pet stayed the age it was created at forever. Rather
+		# than add another accumulator that would need its own drain and catch-up
+		# (see the NPC aging notes), age is DERIVED from this via
+		# resolve_animal_lifecycle(). Written once, never updated.
+		"birth_year": (
+			int(gs.year) - age_years
+			if gs != null
+			else -1
+		),
 		"lifespan_years": lifespan,
 		"alive": true,
 		"pregnant": false,
@@ -2002,3 +2012,155 @@ func _safe_dictionary(value: Variant) -> Dictionary:
 
 func _safe_array(value: Variant) -> Array:
 	return value if typeof(value) == TYPE_ARRAY else []
+
+func resolve_animal_lifecycle(entity_id: String) -> Dictionary:
+	# Single source of truth for a pet's age and alive state.
+	#
+	# Pets have no yearly tick -- nothing in AgeUpRuntimeEngine or WorldEngine
+	# touches them, which is why a pet created at age 3 stayed 3 forever. Rather
+	# than add an accumulator that would need its own bounded drain, anchor and
+	# catch-up (all three of which failed for NPCs before being replaced by
+	# derivation), age is computed from birth_year on every read:
+	#
+	#   age   = current_year - birth_year
+	#   alive = age <= lifespan_years
+	#
+	# Derived state cannot drift, cannot be starved, and needs no invalidation.
+	# Death is still announced exactly once -- see the pet_death_recorded latch
+	# below -- so it is not a silent state change.
+	if (
+		gs == null
+		or typeof(gs.entity_registry) != TYPE_DICTIONARY
+		or not gs.entity_registry.has(entity_id)
+	):
+		return {}
+
+	var entity_raw = gs.entity_registry.get(entity_id, {})
+
+	if typeof(entity_raw) != TYPE_DICTIONARY:
+		return {}
+
+	var entity: Dictionary = entity_raw
+	var current_year: int = int(gs.year)
+	var stored_age: int = int(
+		entity.get("age", entity.get("age_years", 0))
+	)
+
+	# Backfill for pets created before birth_year existed. Anchors from the age
+	# they currently hold, so an existing pet stops being frozen but does not
+	# retroactively gain the years it already missed.
+	if int(entity.get("birth_year", -1)) <= 0:
+		entity["birth_year"] = current_year - stored_age
+
+	var derived_age: int = maxi(
+		0,
+		current_year - int(entity.get("birth_year", current_year))
+	)
+	var lifespan: int = int(entity.get("lifespan_years", 0))
+	var died_of_age: bool = (
+		lifespan > 0
+		and derived_age > lifespan
+	)
+	var was_alive: bool = bool(entity.get("alive", true))
+
+	# A dead animal's age freezes at the age it died, otherwise a long-dead pet
+	# would keep "aging" in the Dead section every year.
+	if died_of_age:
+		derived_age = mini(derived_age, maxi(0, lifespan + 1))
+
+	entity["age"] = derived_age
+	entity["age_years"] = derived_age
+
+	if died_of_age:
+		entity["alive"] = false
+
+		if not bool(entity.get("pet_death_recorded", false)):
+			# Death is DERIVED, not observed: the pet died the year it exceeded its
+			# lifespan, which may be several years before anything read this card.
+			# Recording current_year would date the death to whenever the player
+			# happened to open the hub. birth_year + lifespan_years + 1 is the
+			# first year the animal was past its span, and it is stable no matter
+			# when the read occurs.
+			var true_death_year: int = (
+				int(entity.get("birth_year", current_year))
+				+ lifespan
+				+ 1
+			)
+
+			if true_death_year > current_year:
+				true_death_year = current_year
+
+			entity["pet_death_recorded"] = true
+			entity["death_year"] = true_death_year
+			entity["death_age"] = maxi(0, lifespan + 1)
+			entity["death_reason"] = "old_age"
+
+			EraLog.truth(
+				"ERALIFE_PET_DEATH|entity=%s|name=%s|death_age=%d|lifespan=%d|death_year=%d|observed_year=%d|years_late=%d"
+				% [
+					entity_id,
+					str(entity.get("display_name", "?")),
+					maxi(0, lifespan + 1),
+					lifespan,
+					true_death_year,
+					current_year,
+					current_year - true_death_year
+				]
+			)
+
+	# ensure_entity() maintains TWO copies -- the registry and
+	# graph_state["entities"] -- and cards_for_entity() reads the GRAPH copy first,
+	# so both must move together or the card renders the stale one.
+	#
+	# But ensure_entity() also stamps registered_at_ms = Time.get_ticks_msec() and
+	# writes gs.canonical_relationship_graph. _hub_signature() keys the hub
+	# contract cache on _relationship_graph_revision(), which reads that graph. So
+	# calling it unconditionally on every READ mutated the graph, invalidated the
+	# hub cache, forced a rebuild, and read the pets again -- unbounded recursion
+	# and a signal 11 the moment a second caller (the Dead Pets group) shared the
+	# same build.
+	#
+	# Only write when something actually changed. A read that changes nothing must
+	# not touch the graph.
+	var previous_age: int = int(
+		entity.get("_lifecycle_written_age", -12345)
+	)
+	var previous_alive: bool = bool(
+		entity.get("_lifecycle_written_alive", true)
+	)
+	var lifecycle_changed: bool = (
+		previous_age != derived_age
+		or previous_alive != bool(entity.get("alive", true))
+	)
+
+	if lifecycle_changed:
+		entity["_lifecycle_written_age"] = derived_age
+		entity["_lifecycle_written_alive"] = bool(
+			entity.get("alive", true)
+		)
+
+		gs.entity_registry[entity_id] = entity
+
+		if (
+			gs.relationship_graph_contract_engine != null
+			and gs.relationship_graph_contract_engine.has_method(
+				"ensure_entity"
+			)
+		):
+			gs.relationship_graph_contract_engine.ensure_entity(
+				entity,
+				{
+					"source": "animal_contract_engine.resolve_animal_lifecycle"
+				}
+			)
+	else:
+		gs.entity_registry[entity_id] = entity
+
+	return {
+		"entity_id": entity_id,
+		"age": derived_age,
+		"alive": bool(entity.get("alive", true)),
+		"lifespan_years": lifespan,
+		"died_this_read": died_of_age and was_alive,
+		"birth_year": int(entity.get("birth_year", -1))
+	}

@@ -163,6 +163,18 @@ func get_pet_cards_for_actor(
 			not projection_read_only
 		)
 	)
+	# Resolve every owned animal's age and alive state BEFORE any card is built.
+	#
+	# The card's displayed age is baked from the ENTITY at build time --
+	# _pet_name_with_age() and card_contract_for_edge()'s _entity_name_with_age()
+	# both read entity["age"] -- so resolving afterwards updated the registry but
+	# handed back cards already stamped with the stale age. That is why pets still
+	# showed a frozen age with the derivation in place.
+	_refresh_owned_animal_lifecycles(
+		actor,
+		anchor
+	)
+
 	var cards: Array = []
 	var seen_entity_ids: Dictionary = {}
 	var anchor_cards: Array = []
@@ -372,6 +384,53 @@ func get_pet_cards_for_actor(
 		unfiltered_anchor = gs.relationship_graph_contract_engine.relationships_for_entity(
 			"human:%d" % int(anchor.id), {}
 		).size()
+
+	# Resolve age and alive from birth_year before the cards are reported. This is
+	# the choke point every pet card passes through, so it is where derivation and
+	# the once-only death latch belong -- no yearly tick to starve.
+	# Lifecycle RESOLUTION happens in _refresh_owned_animal_lifecycles() before any
+	# card is built -- a card's displayed age is baked from the entity at
+	# construction time, so resolving afterwards would stamp nothing. What remains
+	# here is presentation only: a dead pet's card cannot be decorated until the
+	# card exists. No age or alive state is computed below.
+	for raw_pet_card in cards:
+		if typeof(raw_pet_card) != TYPE_DICTIONARY:
+			continue
+
+		var pet_entity_id: String = str(
+			raw_pet_card.get("target_entity_id", "")
+		).strip_edges()
+
+		if pet_entity_id == "" or not pet_entity_id.begins_with("animal:"):
+			continue
+
+		var pet_entity: Dictionary = _entity(pet_entity_id)
+
+		if pet_entity.is_empty() or bool(pet_entity.get("alive", true)):
+			continue
+
+		# Dead pets stay in the pets section rather than moving to "dead": that
+		# section is built from person ids via _filter_person_ids_by_alive() and
+		# has no entity lane, so adding one would mean new group builders in two
+		# paths plus a group-count change that shifts the section revision.
+		raw_pet_card["health"] = 0
+		raw_pet_card["alive"] = false
+		raw_pet_card["is_dead"] = true
+		raw_pet_card["role"] = "In Memory"
+		raw_pet_card["death_year"] = int(
+			pet_entity.get("death_year", -1)
+		)
+		raw_pet_card["subtitle"] = (
+			"Died at %d, in %d."
+			% [
+				int(
+					pet_entity.get("death_age", 0)
+				),
+				int(
+					pet_entity.get("death_year", 0)
+				)
+			]
+		)
 
 	EraLog.truth(
 		"ERALIFE_PET_CARDS_READ|gs=%d|tag=%s|graph_edges_total=%d|actor_id=%d|anchor_id=%d|read_only=%s|anchor_cards=%d|final_cards=%d|edges_actor=%d|edges_anchor=%d|source=%s"
@@ -1188,7 +1247,17 @@ func _apply_pet_action_state_delta(entity_id: String, action_id: String, action:
 func _action_result_text(entity: Dictionary, action: Dictionary, state_delta: Dictionary = {}, bond_delta: int = 0) -> String:
 	return "\n".join(_action_feedback_lines(entity, action, state_delta, bond_delta))
 func _profile_identity_contract(entity: Dictionary, card: Dictionary) -> Dictionary:
-	var age_value: int = int(entity.get("age", entity.get("age_years", 0)))
+	# Prefer the card's resolved age (set from resolve_animal_lifecycle) so the
+	# profile cannot disagree with the card the player clicked through from.
+	var age_value: int = int(
+		card.get(
+			"target_age",
+			entity.get("age", entity.get("age_years", 0))
+		)
+	)
+
+	if age_value < 0:
+		age_value = int(entity.get("age", entity.get("age_years", 0)))
 	var role_text: String = str(card.get("role", "Companion")).strip_edges()
 	if role_text == "":
 		role_text = "Companion"
@@ -1938,3 +2007,137 @@ func _safe_dictionary(value: Variant) -> Dictionary:
 
 func _safe_array(value: Variant) -> Array:
 	return value if typeof(value) == TYPE_ARRAY else []
+
+func _refresh_owned_animal_lifecycles(
+	actor: Person,
+	anchor: Person
+) -> void:
+	# Derives age/alive for every animal linked to the actor or the household
+	# anchor, BEFORE cards are built from those entities. Must run first: card
+	# display ages are baked from the entity, not from a field the caller can
+	# patch afterwards.
+	if (
+		gs == null
+		or gs.animal_contract_engine == null
+		or gs.relationship_graph_contract_engine == null
+		or not gs.animal_contract_engine.has_method(
+			"resolve_animal_lifecycle"
+		)
+	):
+		return
+
+	var owner_entity_ids: Array = []
+
+	for owner in [actor, anchor]:
+		if owner == null:
+			continue
+
+		var owner_key: String = "human:%d" % int(owner.id)
+
+		if owner_entity_ids.has(owner_key):
+			continue
+
+		owner_entity_ids.append(owner_key)
+
+	var resolved_count: int = 0
+
+	for owner_key in owner_entity_ids:
+		for raw_edge in _safe_array(
+			gs.relationship_graph_contract_engine.relationships_for_entity(
+				owner_key,
+				{}
+			)
+		):
+			if typeof(raw_edge) != TYPE_DICTIONARY:
+				continue
+
+			# FIX: graph edges are keyed entity_a / entity_b -- there is no
+			# target_entity_id on an edge. The previous walk looked for keys that
+			# do not exist and matched nothing (resolved=0), so the refresh never
+			# ran before card construction.
+			var edge: Dictionary = raw_edge
+			var side_a: String = str(
+				edge.get("entity_a", "")
+			).strip_edges()
+			var side_b: String = str(
+				edge.get("entity_b", "")
+			).strip_edges()
+			var other_id: String = (
+				side_b
+				if side_a == owner_key
+				else side_a
+			)
+
+			if other_id == "" or not other_id.begins_with("animal:"):
+				continue
+
+			var lifecycle: Dictionary = _safe_dictionary(
+				gs.animal_contract_engine.resolve_animal_lifecycle(
+					other_id
+				)
+			)
+
+			if lifecycle.is_empty():
+				continue
+
+			resolved_count += 1
+
+			if bool(lifecycle.get("alive", true)):
+				continue
+
+			# Announce the death once. Latched on pet_death_diarised, separate from
+			# the resolver's pet_death_recorded, so the diary entry and the
+			# ERALIFE_PET_DEATH line cannot double-fire independently.
+			var dead_entity: Dictionary = _entity(other_id)
+
+			if (
+				actor == null
+				or not bool(dead_entity.get("pet_death_recorded", false))
+				or bool(dead_entity.get("pet_death_diarised", false))
+			):
+				continue
+
+			var memorial_text: String = (
+				"%s, my %s, died of old age at %d."
+				% [
+					str(
+						dead_entity.get("display_name", "My pet")
+					),
+					str(
+						dead_entity.get(
+							"species_name",
+							dead_entity.get("species_id", "companion")
+						)
+					).to_lower(),
+					int(
+						dead_entity.get("death_age", 0)
+					)
+				]
+			)
+
+			if typeof(actor.memories) == TYPE_ARRAY:
+				actor.memories.append(memorial_text)
+
+			if gs.narrative_engine != null:
+				gs.narrative_engine.log_event(actor, {
+					"type": "pet_death",
+					"text": memorial_text,
+					"life_diary_text": memorial_text
+				})
+
+			if typeof(gs.entity_registry) == TYPE_DICTIONARY:
+				var stored_raw = gs.entity_registry.get(other_id, {})
+
+				if typeof(stored_raw) == TYPE_DICTIONARY:
+					var stored: Dictionary = stored_raw
+					stored["pet_death_diarised"] = true
+					gs.entity_registry[other_id] = stored
+
+	EraLog.truth(
+		"ERALIFE_PET_LIFECYCLE|stage=refresh_complete|owners=%d|resolved=%d|year=%d"
+		% [
+			owner_entity_ids.size(),
+			resolved_count,
+			int(gs.year)
+		]
+	)
