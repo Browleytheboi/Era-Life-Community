@@ -185839,12 +185839,65 @@ func _finish_age_up_projection_pump(
 		false
 	)
 
+	# End-to-end wall clock: press to fully-rebuilt. This is the number the player
+	# actually experiences, and the one to optimise against. Frame counts alone
+	# hide whether frames are cheap or 60ms each.
+	var age_up_started_us: int = int(
+		get_meta(
+			"age_up_wall_clock_started_at_us",
+			0
+		)
+	)
+
+	if age_up_started_us > 0:
+		EraLog.truth(
+			"ERALIFE_AGE_UP_WALL_CLOCK|year=%d|age=%d|total_ms=%d|passes=%d|step_ms=%d"
+			% [
+				int(
+					gs.year
+				) if gs != null else -1,
+				int(
+					gs.player.age
+				) if (gs != null and gs.player != null) else -1,
+				(
+					int(
+						Time.get_ticks_usec()
+					) - age_up_started_us
+				) / 1000,
+				passes,
+				int(
+					get_meta(
+						"age_up_step_us_total",
+						0
+					)
+				) / 1000
+			]
+		)
+
+		set_meta(
+			"age_up_wall_clock_started_at_us",
+			0
+		)
+		set_meta(
+			"age_up_step_us_total",
+			0
+		)
+
 	EraLog.truth(
-		"ERALIFE_AGE_UP_BOUNDARY|stage=pump_finished|year=%d|age=%d|result=%s|passes=%d|reason=%s|signature=%s"
+		# started_year is the year the lock was CLAIMED. Reporting only gs.year here
+		# was ambiguous: if the year advanced mid-pump the line showed the new year,
+		# which looked like the pump finishing work for a year that never started.
+		"ERALIFE_AGE_UP_BOUNDARY|stage=pump_finished|year=%d|started_year=%d|age=%d|result=%s|passes=%d|reason=%s|signature=%s"
 		% [
 			int(
 				gs.year
 			) if gs != null else -1,
+			int(
+				get_meta(
+					"age_up_transition_lock_year",
+					-1
+				)
+			),
 			int(
 				gs.player.age
 			) if (gs != null and gs.player != null) else -1,
@@ -185893,12 +185946,64 @@ func _drive_age_up_projection_pump(
 
 		return
 
-	var step_status: Dictionary = MainSceneHelpers._safe_dictionary(
-		gs.reality_projection_contract_engine.step_resident_projection(
-			signature,
-			1,
-			2
+	# The arithmetic that should have come first: ~70 passes x ~55ms = ~4000ms,
+	# which is the whole age-up. NPC_PASS_PROFILE's accounted_us was under 500us on
+	# most passes, so NPC aging was never the bulk of it -- the time is in the
+	# projection step itself, which has never been timed. Accumulate per age-up and
+	# report once, so the probe cannot distort what it measures.
+	# The engine's internal max_steps loop CANNOT batch at this budget: it checks
+	# `executed > 0 and elapsed >= frame_budget_ms` before each step, and a step
+	# costs ~3ms against a 2ms budget, so it always exits after exactly one step.
+	# Build 129 relied on max_steps=8 and passes went 41 -> 68 as a result.
+	#
+	# The outer loop is what actually batches, by making repeated CALLS. Restored,
+	# with max_steps=4 so a call can still do more when steps happen to be cheap.
+	# The 2000us outer budget is the load-bearing number -- 8000 broke the walker
+	# and the surface publication (see handoff notes). Do not raise it.
+	var step_t0: int = Time.get_ticks_usec()
+	var step_status: Dictionary = {}
+	var frame_budget_us: int = 2000
+
+	while true:
+		step_status = MainSceneHelpers._safe_dictionary(
+			gs.reality_projection_contract_engine.step_resident_projection(
+				signature,
+				4,
+				2
+			)
 		)
+
+		if bool(
+			step_status.get(
+				"complete",
+				step_status.get(
+					"is_complete",
+					false
+				)
+			)
+		):
+			break
+
+		if not bool(
+			step_status.get(
+				"success",
+				true
+			)
+		):
+			break
+
+		if Time.get_ticks_usec() - step_t0 >= frame_budget_us:
+			break
+	var step_us: int = Time.get_ticks_usec() - step_t0
+
+	set_meta(
+		"age_up_step_us_total",
+		int(
+			get_meta(
+				"age_up_step_us_total",
+				0
+			)
+		) + step_us
 	)
 
 	var projection_complete: bool = bool(
@@ -186211,6 +186316,13 @@ func _deferred_run_age_up_from_button() -> void:
 		# after this -- walker lanes, projection rebuild -- runs across later
 		# frames while the button is already free to fire again. That is the
 		# sequencing question the lock has to answer.
+		set_meta(
+			"age_up_wall_clock_started_at_us",
+			int(
+				Time.get_ticks_usec()
+			)
+		)
+
 		EraLog.truth(
 			"ERALIFE_AGE_UP_BOUNDARY|stage=intent_committed|year=%d|age=%d|frame=%d"
 			% [
@@ -186237,6 +186349,12 @@ func _deferred_run_age_up_from_button() -> void:
 			"age_up_transition_lock_frame",
 			int(
 				Engine.get_process_frames()
+			)
+		)
+		set_meta(
+			"age_up_transition_lock_year",
+			int(
+				gs.year
 			)
 		)
 
@@ -213115,6 +213233,31 @@ func _on_relationship_hub_panel_close_requested() -> void:
 		"relationship_hub_panel_close"
 	)
 
+	# FIX: setting current_panel and the nav state made the Life tab LOOK selected
+	# without drawing anything -- _apply_main_tab_press_frame_nav_state() only
+	# manages nav flags, it does not render. The Life panel stayed blank until the
+	# tab was clicked manually, and age-ups during that window committed correctly
+	# but were not displayed, so the diary appeared to skip years (2060 -> 2065)
+	# and then jump when Life was reopened.
+	#
+	# Only relationships and school were affected: they are the two hubs that take
+	# over the full surface and close back to Life this way. World and career never
+	# showed the bug.
+	# The hubs hide output_label when they take the surface, and nothing showed it
+	# again on close -- measured: label_visible=false, text_len=0. Restore
+	# visibility BEFORE rendering, because the render path skips work when the
+	# label is not visible, which is why simply calling it was not enough.
+	if output_label != null and is_instance_valid(output_label):
+		output_label.visible = true
+		output_label.scroll_active = true
+		output_label.bbcode_enabled = true
+
+	_invalidate_life_diary_contract_render_cache(
+		"relationship_hub_panel_close"
+	)
+	_render_life_diary_panel()
+
+
 
 func _on_relationship_hub_panel_section_requested(
 	section_id: String
@@ -213265,6 +213408,30 @@ func _on_school_hub_panel_close_requested() -> void:
 		"life",
 		"school_hub_panel_close"
 	)
+
+	# FIX: setting current_panel and the nav state made the Life tab LOOK selected
+	# without drawing anything -- _apply_main_tab_press_frame_nav_state() only
+	# manages nav flags, it does not render. The Life panel stayed blank until the
+	# tab was clicked manually, and age-ups during that window committed correctly
+	# but were not displayed, so the diary appeared to skip years (2060 -> 2065)
+	# and then jump when Life was reopened.
+	#
+	# Only relationships and school were affected: they are the two hubs that take
+	# over the full surface and close back to Life this way. World and career never
+	# showed the bug.
+	# The hubs hide output_label when they take the surface, and nothing showed it
+	# again on close -- measured: label_visible=false, text_len=0. Restore
+	# visibility BEFORE rendering, because the render path skips work when the
+	# label is not visible, which is why simply calling it was not enough.
+	if output_label != null and is_instance_valid(output_label):
+		output_label.visible = true
+		output_label.scroll_active = true
+		output_label.bbcode_enabled = true
+
+	_invalidate_life_diary_contract_render_cache(
+		"school_hub_panel_close"
+	)
+	_render_life_diary_panel()
 
 
 func _on_school_hub_panel_section_requested(

@@ -2968,6 +2968,47 @@ func resolve_intent(
 		)
 	).strip_edges().to_lower()
 
+	# DIAGNOSTIC: three age gates have been placed on paths the murder flow does
+	# not use. Report the actual action_id and payload keys arriving here, so the
+	# real dispatch surface stops being guesswork.
+	EraLog.truth(
+		"ERALIFE_CRIME_INTENT|action_id=%s|actor_age=%d|payload_keys=%s"
+		% [
+			action_id,
+			int(actor.age),
+			str(
+				payload.keys()
+			)
+		]
+	)
+
+	# SINGLE AGE GATE for the whole crime system.
+	#
+	# resolve_intent() is the only door: all five crime actions
+	# (begin_weapon_action, choose_weapon_target, commit_weapon_action,
+	# commit_targeted_crime_action, commit_bank_robbery) dispatch from the match
+	# below, and nothing calls those handlers directly. Gating here is what makes
+	# the rule unbypassable -- earlier attempts gated CrimeEngine.commit_crime()
+	# (which the weapon-action flow never touches) and then one handler at a time,
+	# and the weapon flow kept getting through.
+	#
+	# The weapon flow is three steps: arm -> choose target -> commit. Blocking only
+	# the commit would still let a toddler arm murder and browse a target list, so
+	# every step is gated.
+	var crime_action_minimum_age: int = _minimum_age_for_crime_action(
+		action_id,
+		payload
+	)
+
+	if int(actor.age) < crime_action_minimum_age:
+		return _failure(
+			"crime_action_age_restricted",
+			(
+				"You are too young for this. (Requires age %d.)"
+				% crime_action_minimum_age
+			)
+		)
+
 	match action_id:
 		"begin_weapon_action":
 			return begin_weapon_action(
@@ -3050,6 +3091,32 @@ func _commit_targeted_crime_action(
 			"self_target_not_supported",
 			"This crime action cannot target its actor."
 		)
+
+	# Per-action minimum. Hub access alone is 8; murder and assault are far more
+	# serious than that floor. This path never touches
+	# CrimeEngine.commit_crime(), so the severity-derived rule has to be applied
+	# here explicitly or the two paths disagree.
+	var targeted_action_id: String = str(
+		payload.get(
+			"crime_action_id",
+			""
+		)
+	).strip_edges().to_lower()
+	var targeted_minimum_age: int = (
+		16
+		if targeted_action_id == "murder"
+		else 12
+	)
+
+	if int(actor.age) < targeted_minimum_age:
+		return _failure(
+			"crime_action_age_restricted",
+			(
+				"You are too young to attempt this. (Requires age %d.)"
+				% targeted_minimum_age
+			)
+		)
+
 
 	var custody_access: Dictionary = (
 		_incarceration_target_access_contract(
@@ -3353,19 +3420,74 @@ func _commit_bank_robbery(
 		"ui_is_renderer_only": false
 	}
 
+const CRIME_HUB_MINIMUM_AGE: int = 8
+
+
+func _minimum_age_for_crime_action(
+	action_id: String,
+	payload: Dictionary = {}
+) -> int:
+	# Minimum age for a crime intent. Severity-tiered rather than a single floor,
+	# so a child can pickpocket long before they can rob a bank.
+	#
+	#   opening the hub / browsing        -> 8
+	#   armed or targeted actions         -> 12
+	#   murder, bank robbery              -> 16
+	#
+	# The weapon flow carries its crime identity in different keys at different
+	# steps (crime_action_id when arming, weapon_action_id once armed), so both are
+	# checked -- missing one is how the arming step slipped through before.
+	var clean_action: String = str(
+		action_id
+	).strip_edges().to_lower()
+
+	if clean_action == "commit_bank_robbery":
+		return 16
+
+	var crime_identity: String = str(
+		payload.get(
+			"crime_action_id",
+			payload.get(
+				"weapon_action_id",
+				payload.get(
+					"action_kind",
+					""
+				)
+			)
+		)
+	).strip_edges().to_lower()
+
+	if crime_identity.find("murder") >= 0 or crime_identity.find("kill") >= 0:
+		return 16
+
+	if clean_action in [
+		"begin_weapon_action",
+		"choose_weapon_target",
+		"commit_weapon_action",
+		"commit_targeted_crime_action"
+	]:
+		return 12
+
+	return CRIME_HUB_MINIMUM_AGE
+
+
 func can_actor_access_crime_hub(
 	actor: Person
 ) -> bool:
+	# FIX: this returned `alive` and nothing else, so an infant could open the hub,
+	# arm murder, kill a family member and be sentenced to prison. Six crime-action
+	# entry points call this, including _commit_targeted_crime_action() -- the
+	# targeted murder/assault path, which does NOT route through
+	# CrimeEngine.commit_crime() and so was not covered by the age gate added
+	# there.
+	#
+	# 8 is the floor for entering the hub at all; individual crimes carry their own
+	# higher minimums via CrimeEngine.minimum_age_for_crime() (severity-derived:
+	# 8 / 12 / 16, violent >= 12), so murder still requires 16.
+	if actor == null or not bool(actor.alive):
+		return false
 
-
-
-
-	return (
-		actor != null
-		and bool(
-			actor.alive
-		)
-	)
+	return int(actor.age) >= CRIME_HUB_MINIMUM_AGE
 
 
 func begin_weapon_action(

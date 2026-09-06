@@ -142,7 +142,57 @@ func remember(person: Person, text: String, context: Dictionary = {}) -> Diction
 		"category": str(context.get("category", "")),
 		"shared_event_id": str(context.get("shared_event_id", "")),
 		"conflicting_narrative_group": str(context.get("conflicting_narrative_group", "")),
-		"narrative_contract": narrative_contract.duplicate(true),
+		# FIX: this was narrative_contract.duplicate(true) -- a full recursive deep
+		# copy of the entire narrative contract, stored inside EVERY memory. It was
+		# the dominant cost in the age-up: consciousness_engine.remember() measured
+		# 8.5ms at one memory and 24ms at thirty-four, growing linearly forever,
+		# and it runs twice per family member per year (the relationship hook
+		# re-enters log_event).
+		#
+		# Only THREE fields are ever read back from the stored contract:
+		#   ConsciousnessEngine:368 -> rendering.allow_reinterpretation
+		#   NarrativeEngine:941     -> participants.participant_ids
+		# Storing just those preserves both readers and removes the growth.
+		"narrative_contract": {
+			"rendering": {
+				"allow_reinterpretation": bool(
+					_safe_dictionary(
+						narrative_contract.get(
+							"rendering",
+							{}
+						)
+					).get(
+						"allow_reinterpretation",
+						true
+					)
+				)
+			},
+			"participants": {
+				"participant_ids": (
+					_safe_dictionary(
+						narrative_contract.get(
+							"participants",
+							{}
+						)
+					).get(
+						"participant_ids",
+						[]
+					)
+				).duplicate(false)
+				if typeof(
+					_safe_dictionary(
+						narrative_contract.get(
+							"participants",
+							{}
+						)
+					).get(
+						"participant_ids",
+						[]
+					)
+				) == TYPE_ARRAY
+				else []
+			}
+		},
 		"cross_universe": bool(memory_rules.get("cross_universe_indexing", false)),
 		"universe_seed": _current_world_seed(),
 		"created_at_ms": int(Time.get_ticks_msec())

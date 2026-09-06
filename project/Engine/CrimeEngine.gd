@@ -28,6 +28,59 @@ var CRIMES = [
 
 
 
+func minimum_age_for_crime(crime: Dictionary) -> int:
+	# Derived from the catalog's existing "severity" (1-4) and "violent" fields
+	# rather than a per-crime constant, so new crimes inherit a sane floor without
+	# anyone remembering to add one.
+	#
+	#   severity 1 (shoplifting, pickpocketing)  -> 8
+	#   severity 2 (mugging, burglary)           -> 12
+	#   severity 3+ (bank robbery, assassination)-> 16
+	#
+	# Anything flagged violent gets at least 12 regardless of severity.
+	if crime.is_empty():
+		return 0
+
+	var severity: int = int(
+		crime.get(
+			"severity",
+			1
+		)
+	)
+	var minimum: int = 8
+
+	if severity >= 3:
+		minimum = 16
+	elif severity == 2:
+		minimum = 12
+
+	if (
+		bool(
+			crime.get(
+				"violent",
+				false
+			)
+		)
+		and minimum < 12
+	):
+		minimum = 12
+
+	return minimum
+
+
+func crime_age_block_reason(crime: Dictionary, actor_age: int) -> String:
+	# Empty string means allowed. Callers use this both to refuse in
+	# commit_crime() and to filter what the hub offers, so the two cannot drift.
+	var minimum: int = minimum_age_for_crime(
+		crime
+	)
+
+	if actor_age >= minimum:
+		return ""
+
+	return "You are too young to attempt this. (Requires age %d.)" % minimum
+
+
 func commit_crime(crime_name: String, weapon_name: String) -> Dictionary:
 	var crime: Dictionary = _find_crime_definition(crime_name)
 	if crime.is_empty():
@@ -36,6 +89,29 @@ func commit_crime(crime_name: String, weapon_name: String) -> Dictionary:
 			"text": "\n \n Unknown crime.",
 			"popup_title": "Crime",
 			"popup_text": "Unknown crime.",
+			"popup_footer": "Tap anywhere to continue."
+		}
+
+	# Age gate. Enforced HERE rather than only in the hub, because this is where a
+	# crime actually happens -- the hub had an "access_contract" declaring
+	# minimum_age 0 and under_12_access true, and nothing read it, so an infant
+	# could commit murder and be imprisoned for it.
+	var actor_age_for_crime: int = (
+		int(gs.player.age)
+		if (gs != null and gs.player != null)
+		else 0
+	)
+	var age_block_reason: String = crime_age_block_reason(
+		crime,
+		actor_age_for_crime
+	)
+
+	if age_block_reason != "":
+		return {
+			"result": "fail",
+			"text": "\n \n %s" % age_block_reason,
+			"popup_title": "Crime",
+			"popup_text": age_block_reason,
 			"popup_footer": "Tap anywhere to continue."
 		}
 

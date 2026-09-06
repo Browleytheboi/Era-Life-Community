@@ -666,6 +666,47 @@ func _collect_player_relationship_targets() -> Array:
 		_append_relationship_target(out, seen, gs.get_or_reactivate_npc_by_id(int(sid)))
 
 	return out
+func player_derived_age_for_year(target_year: int) -> int:
+	# Derived player age, for shadow-checking the accumulator before converting to
+	# it. Person.birth_year already exists (added for NPCs); the player has never
+	# had one set, so backfill lazily from the current age the first time we ask.
+	if gs == null or gs.player == null:
+		return -1
+
+	if int(gs.player.birth_year) <= 0:
+		gs.player.birth_year = int(gs.year) - int(gs.player.age)
+
+	return target_year - int(gs.player.birth_year)
+
+
+func _shadow_check_player_age(
+	writer: String,
+	target_year: int,
+	target_age: int
+) -> void:
+	# Non-behavioural. Reports where the accumulated target_age and the derived
+	# age disagree. If this never fires across a long life, the accumulator is
+	# correct in practice and conversion is low-risk cleanup. If it fires, the
+	# lines say which writer and by how much -- which is what conversion has to
+	# fix, and what the current monotonic guard is quietly papering over.
+	var derived: int = player_derived_age_for_year(target_year)
+
+	if derived < 0 or derived == target_age:
+		return
+
+	EraLog.truth(
+		"ERALIFE_PLAYER_AGE_SHADOW|writer=%s|target_year=%d|accumulated=%d|derived=%d|delta=%d|birth_year=%d"
+		% [
+			writer,
+			target_year,
+			target_age,
+			derived,
+			target_age - derived,
+			int(gs.player.birth_year)
+		]
+	)
+
+
 func _capture_age_up_npc_age_truth_snapshot() -> Dictionary:
 	if (
 		gs != null
@@ -2594,6 +2635,12 @@ func _commit_zero_frame_age_up_visible_time(
 
 	if contract_advances_year:
 		gs.year = target_year
+
+	_shadow_check_player_age(
+		"_commit_zero_frame_age_up_visible_time",
+		target_year,
+		target_age
+	)
 
 	EraLog.truth(
 		"ERALIFE_AGE_WRITE|writer=_commit_zero_frame_age_up_visible_time|reason=%s|from=%d|to=%d|source_age=%d|source_year=%d|target_year=%d|live_year=%d|gs=%d|tag=%s|player=%d|player_id=%d"
@@ -4614,6 +4661,12 @@ func force_complete_nonvisible_age_up_transaction(reason: String = "remote_shell
 		if not gs.year_locked:
 			gs.year = target_year
 
+		_shadow_check_player_age(
+			"force_complete_nonvisible_age_up_transaction",
+			target_year,
+			target_age
+		)
+
 		EraLog.truth(
 			"ERALIFE_AGE_WRITE|writer=force_complete_nonvisible_age_up_transaction|reason=%s|from=%d|to=%d|source_age=%d|source_year=%d|target_year=%d|live_year=%d|gs=%d|tag=%s|player=%d|player_id=%d"
 			% [
@@ -4771,6 +4824,12 @@ func _ensure_age_up_time_truth_committed(
 
 	if not year_locked_active:
 		gs.year = target_year
+
+	_shadow_check_player_age(
+		"_ensure_age_up_time_truth_committed",
+		target_year,
+		target_age
+	)
 
 	EraLog.truth(
 		"ERALIFE_AGE_WRITE|writer=_ensure_age_up_time_truth_committed|reason=%s|from=%d|to=%d|source_age=%d|source_year=%d|target_year=%d|live_year=%d|gs=%d|tag=%s|player=%d|player_id=%d"

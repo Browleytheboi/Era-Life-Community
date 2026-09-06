@@ -989,6 +989,10 @@ func diary_entries_for_actor(
 			entry
 		)
 
+		# The ERALIFE_DIARY_GROUP probe that sat here fired once per diary entry.
+		# Removed: per-entry printing is a synchronous disk flush with File Logging
+		# on, and it distorts any timing taken while it is active. Re-add narrowly
+		# if the missing-year-heading question is picked up again.
 		if lines.is_empty():
 			continue
 

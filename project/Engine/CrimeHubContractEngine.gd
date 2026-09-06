@@ -2534,6 +2534,37 @@ func _decorate_crime_target_rows(
 				+ " • Lives in another nation."
 			)
 
+		# Age gate, surfaced the same way as the out-of-nation notice rather than
+		# by hiding the tab. An empty Targets list next to an empty Crime Actions
+		# list reads as broken; an explicit reason tells the player the system
+		# exists and why it is closed to them.
+		#
+		# 16 is the murder minimum -- the Targets tab exists to direct murder and
+		# assault, and murder is the higher of the two.
+		var target_age_minimum: int = minimum_age_for_crime_action_id(
+			"murder"
+		)
+		var actor_meets_age_for_targets: bool = (
+			actor != null
+			and int(actor.age) >= target_age_minimum
+		)
+
+		if not actor_meets_age_for_targets:
+			row [
+				"subtitle"
+			] += (
+				"\nNOT AVAILABLE • Requires age %d."
+				% target_age_minimum
+			)
+			row [
+				"physical_target_available"
+			] = false
+			row [
+				"physical_target_unavailable_reason"
+			] = (
+				"actor_below_minimum_age"
+			)
+
 		row [
 			"physical_target_access_contract"
 		] = physical_access
@@ -2553,8 +2584,12 @@ func _decorate_crime_target_rows(
 			"target_selection_action"
 		] = {
 			"id": "choose_crime_target",
-			"label": "TARGET",
-			"enabled": true,
+			"label": (
+				"TARGET"
+				if actor_meets_age_for_targets
+				else "TOO YOUNG"
+			),
+			"enabled": actor_meets_age_for_targets,
 			"payload": {
 				"action_id": "choose_crime_target",
 				"target_id": target_id
@@ -3672,6 +3707,80 @@ func resolve_intent(
 			actor.id
 		)
 	)
+
+	# DIAGNOSTIC: reports every action id reaching this dispatcher, so the real
+	# surface is observed rather than inferred.
+	EraLog.truth(
+		"ERALIFE_CRIME_INTENT|engine=hub|action_id=%s|crime_action=%s|actor_age=%d"
+		% [
+			action_id,
+			str(
+				payload.get(
+					"crime_action_id",
+					"-"
+				)
+			),
+			int(actor.age)
+		]
+	)
+
+	# AGE GATE -- second of two. This engine has its OWN resolve_intent() with the
+	# same signature as CrimeContractEngine's, and the murder flow goes through
+	# THIS one: "select_crime_action" (the CHOOSE METHOD / POISON / DIRECT ATTACK
+	# buttons) is dispatched here and never reaches the other engine. Three
+	# earlier gates were placed on the other surface and the flow walked straight
+	# past all of them.
+	#
+	# Browsing the hub is allowed from 8 so the player can see the system exists.
+	# Anything that arms or commits a crime carries its own higher minimum.
+	# Every action id this dispatcher accepts, gated explicitly. Enumerated from
+	# the match below rather than guessed -- open_crime_weapon_picker was only
+	# caught by a fallback before, which is how the first three attempts at this
+	# missed entire paths.
+	var hub_crime_action: String = str(
+		payload.get(
+			"crime_action_id",
+			""
+		)
+	).strip_edges().to_lower()
+	var hub_intent_minimum_age: int = 8
+
+	match action_id:
+		# Viewing only. Allowed from 8 so the system is discoverable.
+		"open_hub", "refresh", "prewarm_hub", "change_section", \
+		"cancel_crime_target_selection", "prison_activity":
+			hub_intent_minimum_age = 8
+
+		# Arming, targeting or committing. Murder carries its own higher bar.
+		"select_crime_action", "choose_crime_target", \
+		"open_crime_weapon_picker", "commit_weapon_action":
+			# Same helper the row builder uses, so offered and permitted agree.
+			hub_intent_minimum_age = minimum_age_for_crime_action_id(
+				hub_crime_action
+			)
+
+			if hub_intent_minimum_age < 12:
+				hub_intent_minimum_age = 12
+
+		"open_bank_robbery_weapon_picker", "commit_bank_robbery":
+			hub_intent_minimum_age = minimum_age_for_crime_action_id(
+				"bank_robbery"
+			)
+
+		_:
+			# Unknown ids default to the armed-action bar rather than the browse
+			# bar, so a new action added later fails closed.
+			hub_intent_minimum_age = 12
+
+	if int(actor.age) < hub_intent_minimum_age:
+		return _failure(
+			"crime_action_age_restricted",
+			(
+				"You are too young for this. (Requires age %d.)"
+				% hub_intent_minimum_age
+			)
+		)
+
 	match action_id:
 		"open_hub", "refresh", "prewarm_hub":
 			var projection_context: Dictionary = (
@@ -6721,9 +6830,31 @@ func emit_hub_contract(
 		"identity": _identity_contract(
 			actor
 		),
+		# FIX: this declared minimum_age 0 / under_12_access true, and NOTHING in the
+		# project read either field -- so an infant could open the hub, commit
+		# murder, and be imprisoned. Enforcement now lives in
+		# CrimeEngine.commit_crime() (severity-derived: 8 / 12 / 16, violent >= 12),
+		# which every crime path routes through. These values are reported so the
+		# UI can reflect the same rule rather than asserting a different one.
 		"access_contract": {
-			"minimum_age": 0,
-			"under_12_access": true,
+			"minimum_age": (
+				gs.crime_engine.minimum_age_for_crime(
+					{
+						"severity": 1,
+						"violent": false
+					}
+				)
+				if (
+					gs != null
+					and gs.crime_engine != null
+					and gs.crime_engine.has_method(
+						"minimum_age_for_crime"
+					)
+				)
+				else 8
+			),
+			"under_12_access": false,
+			"enforced_in": "CrimeEngine.commit_crime",
 		},
 		"incarcerated": incarcerated,
 		"prison_reality_contract": prison_contract,
@@ -7572,12 +7703,58 @@ func _section_rows(
 				actor,
 				prison_contract
 			)
+func minimum_age_for_crime_action_id(crime_action_id: String) -> int:
+	# Shared by the dispatcher gate and the row builder so what is OFFERED and what
+	# is PERMITTED cannot drift apart.
+	match str(crime_action_id).strip_edges().to_lower():
+		"murder", "bank_robbery":
+			return 16
+
+		"assault", "use_weapon":
+			return 12
+
+		_:
+			return 8
+
+
 func _crime_action_rows(
 	actor: Person
 ) -> Array:
 	if actor == null:
 		return []
 
+	# Under-age actors are not offered crimes they cannot commit. The dispatcher
+	# still refuses them independently -- this only stops the player being shown a
+	# menu that would reject every press.
+	var actor_age_for_rows: int = int(
+		actor.age
+	)
+	var offered_rows: Array = []
+
+	for raw_row in _crime_action_rows_catalog():
+		if typeof(raw_row) != TYPE_DICTIONARY:
+			continue
+
+		var row: Dictionary = raw_row
+
+		if actor_age_for_rows < minimum_age_for_crime_action_id(
+			str(
+				row.get(
+					"crime_action_id",
+					""
+				)
+			)
+		):
+			continue
+
+		offered_rows.append(
+			row
+		)
+
+	return offered_rows
+
+
+func _crime_action_rows_catalog() -> Array:
 	return [
 		{
 			"kind": "crime_action",

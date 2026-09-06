@@ -136,6 +136,11 @@ func create_custom_player(settings: Dictionary) -> Person:
 	var p = gs.npc_factory.create_random_npc(false)
 	var requested_starting_age: int = int(settings.get("starting_age", settings.get("age", 0)))
 	p.age = int(clamp(requested_starting_age, 0, 120))
+	# Anchor the player the same way NPCs are anchored. Nothing derives from this
+	# yet -- it feeds the ERALIFE_PLAYER_AGE_SHADOW check while we establish
+	# whether the accumulator is actually wrong anywhere. Written once.
+	if gs != null:
+		p.birth_year = int(gs.year) - int(p.age)
 	var era_name: String = _safe_character_creator_era_name(settings)
 
 	if settings.has("reality_mode"):

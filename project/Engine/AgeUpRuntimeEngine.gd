@@ -643,6 +643,15 @@ func advance_year_and_handle_era_shift(actor_for_narrative: Person = null) -> vo
 				gs.year = target_year
 
 			if gs.player != null:
+				if gs.life_engine != null and gs.life_engine.has_method(
+					"_shadow_check_player_age"
+				):
+					gs.life_engine._shadow_check_player_age(
+						"age_up_runtime_engine.walker_complete",
+						target_year,
+						target_age
+					)
+
 				# FIX: this engine commits target_age from
 				# scenario_state["age_up_time_contract"], which can be the PREVIOUS
 				# year's contract. It then wrote that stale target unconditionally,
@@ -677,6 +686,15 @@ func advance_year_and_handle_era_shift(actor_for_narrative: Person = null) -> vo
 		gs.year = target_year
 
 	if gs.player != null:
+		if gs.life_engine != null and gs.life_engine.has_method(
+			"_shadow_check_player_age"
+		):
+			gs.life_engine._shadow_check_player_age(
+				"age_up_runtime_engine.safety_exhausted",
+				target_year,
+				target_age
+			)
+
 		# FIX: same stale-contract regression as the walker-complete path above.
 		if target_age < int(gs.player.age):
 			EraLog.truth(
@@ -1570,12 +1588,28 @@ func _step_year_and_era_mutation_walker(
 		3:
 			lane_name = "active_npc_biological_year"
 
+			var npc_pass_t0: int = Time.get_ticks_usec()
 			var biological_report: Dictionary = (
 				_apply_runtime_active_npc_biological_year(
 					int(
 						gs.year
 					)
 				)
+			)
+			var npc_pass_us: int = Time.get_ticks_usec() - npc_pass_t0
+
+			# Whole-pass cost, to compare against the sum of the per-NPC call
+			# timings. If the per-call numbers are small but this is large, the
+			# cost is the loop's own overhead (lookup, priority walk, started-ages
+			# bookkeeping) rather than the three engine calls inside it.
+			EraLog.truth(
+				"ERALIFE_NPC_PASS_TIMING|year=%d|pass_us=%d"
+				% [
+					int(
+						gs.year
+					),
+					npc_pass_us
+				]
 			)
 
 			# DIAGNOSTIC: NPCs are not aging -- a mother generated at 25 is still 26
@@ -1609,74 +1643,86 @@ func _step_year_and_era_mutation_walker(
 				else {}
 			)
 
-			EraLog.truth(
-				"ERALIFE_NPC_AGING|year=%d|aged=%d|prioritized=%d|corrected=%d|recovered=%d|cursor=%d|processed=%d|complete=%s|task_ran=%s|task_reason=%s|parents=%d"
-				% [
-					int(
-						gs.year
-					),
-					int(
-						npc_task_result.get(
-							"aged_npcs",
-							-1
-						)
-					),
-					int(
-						npc_task_result.get(
-							"prioritized_npcs",
-							-1
-						)
-					),
-					int(
-						npc_task_result.get(
-							"corrected_overadvanced_npcs",
-							-1
-						)
-					),
-					int(
-						npc_task_result.get(
-							"recovered_same_year_npcs",
-							-1
-						)
-					),
-					int(
-						npc_task_result.get(
-							"cursor",
-							-1
-						)
-					),
-					int(
-						biological_report.get(
-							"processed_this_quantum",
-							-1
-						)
-					),
-					str(
-						npc_task_result.get(
-							"is_complete",
-							npc_task_report.get(
+			# Gated: fires on every lane-3 entry, which is once per frame while the
+			# aging drain is running.
+			if (
+				gs != null
+				and typeof(gs.scenario_state) == TYPE_DICTIONARY
+				and bool(
+					gs.scenario_state.get(
+						"eralife_perf_trace",
+						false
+					)
+				)
+			):
+				EraLog.truth(
+					"ERALIFE_NPC_AGING|year=%d|aged=%d|prioritized=%d|corrected=%d|recovered=%d|cursor=%d|processed=%d|complete=%s|task_ran=%s|task_reason=%s|parents=%d"
+					% [
+						int(
+							gs.year
+						),
+						int(
+							npc_task_result.get(
+								"aged_npcs",
+								-1
+							)
+						),
+						int(
+							npc_task_result.get(
+								"prioritized_npcs",
+								-1
+							)
+						),
+						int(
+							npc_task_result.get(
+								"corrected_overadvanced_npcs",
+								-1
+							)
+						),
+						int(
+							npc_task_result.get(
+								"recovered_same_year_npcs",
+								-1
+							)
+						),
+						int(
+							npc_task_result.get(
+								"cursor",
+								-1
+							)
+						),
+						int(
+							biological_report.get(
+								"processed_this_quantum",
+								-1
+							)
+						),
+						str(
+							npc_task_result.get(
 								"is_complete",
+								npc_task_report.get(
+									"is_complete",
+									"-"
+								)
+							)
+						),
+						str(
+							npc_task_report.get(
+								"ran",
 								"-"
 							)
-						)
-					),
-					str(
-						npc_task_report.get(
-							"ran",
-							"-"
-						)
-					),
-					str(
-						npc_task_report.get(
-							"reason",
-							"-"
-						)
-					),
-					int(
-						gs.player.parents.size()
-					) if gs.player != null else -1
-				]
-			)
+						),
+						str(
+							npc_task_report.get(
+								"reason",
+								"-"
+							)
+						),
+						int(
+							gs.player.parents.size()
+						) if gs.player != null else -1
+					]
+				)
 
 			state [
 				"active_npc_biological_tick"
@@ -6592,6 +6638,15 @@ func _step_temporal_slice_streaming_walker(max_transforms: int = 1, max_budget_m
 			gs.year = target_year
 
 		if gs.player != null:
+			if gs.life_engine != null and gs.life_engine.has_method(
+				"_shadow_check_player_age"
+			):
+				gs.life_engine._shadow_check_player_age(
+					"age_up_runtime_engine.streaming_complete",
+					target_year,
+					target_age
+				)
+
 			# FIX: same stale-contract regression as the walker paths.
 			if target_age < int(gs.player.age):
 				EraLog.truth(

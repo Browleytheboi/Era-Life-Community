@@ -2133,11 +2133,21 @@ func _refresh_owned_animal_lifecycles(
 					stored["pet_death_diarised"] = true
 					gs.entity_registry[other_id] = stored
 
-	EraLog.truth(
-		"ERALIFE_PET_LIFECYCLE|stage=refresh_complete|owners=%d|resolved=%d|year=%d"
-		% [
-			owner_entity_ids.size(),
-			resolved_count,
-			int(gs.year)
-		]
-	)
+	# Gated: fires on every pet-card read, i.e. every hub refresh.
+	if (
+		typeof(gs.scenario_state) == TYPE_DICTIONARY
+		and bool(
+			gs.scenario_state.get(
+				"eralife_perf_trace",
+				false
+			)
+		)
+	):
+		EraLog.truth(
+			"ERALIFE_PET_LIFECYCLE|stage=refresh_complete|owners=%d|resolved=%d|year=%d"
+			% [
+				owner_entity_ids.size(),
+				resolved_count,
+				int(gs.year)
+			]
+		)

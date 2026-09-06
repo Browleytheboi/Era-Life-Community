@@ -69,16 +69,54 @@ func log_event(person_or_payload, raw_event: Dictionary = {}):
 		text = gs.llm_bridge.enhance(text, person, event_payload)
 
 	narrative_contract ["rendered_text"] = text
-	narrative_contract ["memory_packet"] = _build_narrative_memory_packet(person, narrative_contract, text)
 
+	# TIMING: this whole function costs 22ms early in a life and 64ms ten years
+	# later, per family member, per year -- the dominant and unbounded cost in the
+	# age-up. Six substantial calls follow; time all of them rather than guessing
+	# which scales with accumulated history.
+	var ne_t0: int = Time.get_ticks_usec()
+	narrative_contract ["memory_packet"] = _build_narrative_memory_packet(person, narrative_contract, text)
+	var ne_packet_us: int = Time.get_ticks_usec() - ne_t0
+
+	var ne_t1: int = Time.get_ticks_usec()
 	_commit_narrative_memory(person, narrative_contract, text)
+	var ne_memory_us: int = Time.get_ticks_usec() - ne_t1
+
+	var ne_t2: int = Time.get_ticks_usec()
 	_apply_narrative_relationship_delta(person, narrative_contract)
+	var ne_delta_us: int = Time.get_ticks_usec() - ne_t2
+
+	var ne_t3: int = Time.get_ticks_usec()
 	_emit_world_feed_from_narrative_contract(person, narrative_contract, text)
+	var ne_feed_us: int = Time.get_ticks_usec() - ne_t3
+
+	var ne_t4: int = Time.get_ticks_usec()
 
 	if not bool(event_payload.get("skip_relationship_hooks", false)):
 		_apply_relationship_memory_hooks(person, narrative_contract, text)
 
+	var ne_hooks_us: int = Time.get_ticks_usec() - ne_t4
+
+	var ne_t5: int = Time.get_ticks_usec()
 	_commit_narrative_report(narrative_contract)
+	var ne_report_us: int = Time.get_ticks_usec() - ne_t5
+
+	if (
+		ne_packet_us + ne_memory_us + ne_delta_us
+		+ ne_feed_us + ne_hooks_us + ne_report_us
+	) > 2000:
+		EraLog.truth(
+			"ERALIFE_NARRATIVE_TIMING|packet_us=%d|memory_us=%d|delta_us=%d|feed_us=%d|hooks_us=%d|report_us=%d|memories=%d"
+			% [
+				ne_packet_us,
+				ne_memory_us,
+				ne_delta_us,
+				ne_feed_us,
+				ne_hooks_us,
+				ne_report_us,
+				person.memories.size() if typeof(person.memories) == TYPE_ARRAY else -1
+			]
+		)
 
 	return {
 		"success": true,
@@ -450,11 +488,21 @@ func _commit_narrative_memory(person: Person, narrative_contract: Dictionary, te
 	if gs == null or person == null:
 		return
 
+	# Three memory engines per event. This function measures 9-17ms and grows with
+	# stored memories; split them rather than guess which scales.
+	var mem_t0: int = Time.get_ticks_usec()
+
 	if gs.memory_engine != null and gs.memory_engine.has_method("remember"):
 		gs.memory_engine.remember(int(person.id), text)
 
+	var mem_basic_us: int = Time.get_ticks_usec() - mem_t0
+	var mem_t1: int = Time.get_ticks_usec()
+
 	if gs.legacy_memory_engine != null and gs.legacy_memory_engine.has_method("record_dynasty_event"):
 		gs.legacy_memory_engine.record_dynasty_event(person, text)
+
+	var mem_legacy_us: int = Time.get_ticks_usec() - mem_t1
+	var mem_t2: int = Time.get_ticks_usec()
 
 	if gs.consciousness_engine != null and gs.consciousness_engine.has_method("remember"):
 		var memory_packet: Dictionary = narrative_contract.get("memory_packet", {}).duplicate(true)
@@ -462,7 +510,12 @@ func _commit_narrative_memory(person: Person, narrative_contract: Dictionary, te
 			"source": str(narrative_contract.get("source", "narrative_engine")),
 			"memory_type": str(memory_packet.get("memory_type", memory_packet.get("type", "episodic"))),
 			"perspective": str(memory_packet.get("perspective", "first_person")),
-			"narrative_contract": narrative_contract.duplicate(true),
+			# Passed by reference, not deep-copied. ConsciousnessEngine.remember()
+			# reads only rendering.allow_reinterpretation and
+			# participants.participant_ids from this, and now stores just those --
+			# so the recursive copy here was pure overhead on the hottest path in
+			# the age-up.
+			"narrative_contract": narrative_contract,
 			"narrative_tone": str(memory_packet.get("tone", "neutral")),
 			"emotion_tags": memory_packet.get("emotion_tags", []).duplicate(true) if typeof(memory_packet.get("emotion_tags", [])) == TYPE_ARRAY else [],
 			"memory_impact": memory_packet.get("impact", {}).duplicate(true) if typeof(memory_packet.get("impact", {})) == TYPE_DICTIONARY else {},
@@ -472,6 +525,19 @@ func _commit_narrative_memory(person: Person, narrative_contract: Dictionary, te
 			"event_name": str(memory_packet.get("event_name", "")),
 			"category": str(memory_packet.get("category", "life"))
 		})
+
+	var mem_conscious_us: int = Time.get_ticks_usec() - mem_t2
+
+	if mem_basic_us + mem_legacy_us + mem_conscious_us > 2000:
+		EraLog.truth(
+			"ERALIFE_MEMORY_COMMIT_TIMING|basic_us=%d|legacy_us=%d|consciousness_us=%d|memories=%d"
+			% [
+				mem_basic_us,
+				mem_legacy_us,
+				mem_conscious_us,
+				person.memories.size() if typeof(person.memories) == TYPE_ARRAY else -1
+			]
+		)
 
 
 func _emit_world_feed_from_narrative_contract(person: Person, narrative_contract: Dictionary, text: String) -> void:
