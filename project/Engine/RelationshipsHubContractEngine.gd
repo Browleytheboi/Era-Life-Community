@@ -1880,12 +1880,34 @@ func _step_resident_hub_projection(
 			"one_group_per_service_quantum"
 		] = true
 
-		if active_group_cursor < required_group_count:
+		# Empty groups no longer cost a whole quantum each.
+		#
+		# One group per quantum, and the "dead" section alone has 7 groups that are
+		# almost always empty (Dead Siblings, Dead Children, Dead Great-
+		# Grandparents...). Across all sections that was ~25 of the ~41 projection
+		# passes in an age-up, most of them producing "None.".
+		#
+		# The group SET is unchanged -- every group is still built, still appended
+		# at its own cursor, and required_group_count is untouched. Only the
+		# yielding changes: a group that produced no cards does not end the
+		# quantum, so runs of empty groups collapse into one pass instead of one
+		# each. Group count and section revision are therefore identical, which
+		# matters because the panel's gate keys on them (see the Dead Pets lane
+		# notes -- changing a group count invalidates every cached surface).
+		#
+		# Bounded by empty_group_budget so a section of entirely empty groups
+		# cannot monopolise a frame.
+		var empty_groups_this_quantum: int = 0
+		var empty_group_budget: int = 6
+		var group_contract: Dictionary = {}
+		var group_projection_pending: bool = false
+
+		while active_group_cursor < required_group_count:
 			projection_context [
 				"section_group_cursor"
 			] = active_group_cursor
 
-			var group_contract: Dictionary = (
+			group_contract = (
 				_resident_relationship_group_quantum(
 					actor,
 					section_id,
@@ -1893,7 +1915,7 @@ func _step_resident_hub_projection(
 					projection_context
 				)
 			)
-			var group_projection_pending: bool = bool(
+			group_projection_pending = bool(
 				group_contract.get(
 					"projection_pending",
 					false
@@ -1901,9 +1923,6 @@ func _step_resident_hub_projection(
 			)
 
 			if not group_contract.is_empty():
-
-
-
 				while (
 					current_groups.size()
 					< active_group_cursor
@@ -1924,12 +1943,25 @@ func _step_resident_hub_projection(
 						active_group_cursor
 					] = group_contract
 
-
-
-
-
 			if not group_projection_pending:
 				active_group_cursor += 1
+
+			# A group that produced cards ends the quantum, exactly as before. A
+			# group that produced none does not -- move straight on to the next.
+			var group_card_count: int = _array(
+				group_contract.get(
+					"cards",
+					[]
+				)
+			).size()
+
+			if group_projection_pending or group_card_count > 0:
+				break
+
+			empty_groups_this_quantum += 1
+
+			if empty_groups_this_quantum >= empty_group_budget:
+				break
 		var section_complete: bool = (
 			active_group_cursor
 			>= required_group_count

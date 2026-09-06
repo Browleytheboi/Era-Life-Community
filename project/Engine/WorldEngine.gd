@@ -786,6 +786,23 @@ func _step_world_age_npcs(
 		Time.get_ticks_msec()
 	)
 	var processed: int = 0
+	# Build the player's fact dictionary ONCE for this pass. Every age-event
+	# resolves a relation label against the same observer, and
+	# get_npc_facts_by_id() does a linear population scan plus a 51-field
+	# dictionary construction each time. Measured: 22-59ms per NPC before this,
+	# against a 1-2ms drain budget.
+	var pass_player_facts: Dictionary = {}
+	var pending_entity_refresh: Array = []
+
+	if (
+		gs != null
+		and gs.player != null
+		and gs.has_method("get_npc_facts_by_id")
+	):
+		pass_player_facts = gs.get_npc_facts_by_id(
+			int(gs.player.id)
+		)
+
 	var age_cursor: int = int(
 		state.get(
 			"cursor",
@@ -1161,46 +1178,6 @@ func _step_world_age_npcs(
 		# pins expected_age at the first recorded value forever and the else branch
 		# below counts the NPC as "aged" while writing nothing. Report the actual
 		# decision for priority NPCs.
-		if true:
-			EraLog.truth(
-				"ERALIFE_NPC_AGE_DECISION|npc_id=%s|target_year=%d|previous_age=%d|started_age=%d|expected_age=%d|years_elapsed=%d|birth_year=%d|last_bio_year=%d|had_started_entry=%s|branch=%s|site=primary|from_priority=%s"
-				% [
-					npc_key,
-					target_year,
-					previous_age,
-					int(
-						started_ages.get(
-							npc_key,
-							-1
-						)
-					),
-					expected_age,
-					years_elapsed,
-					int(npc.birth_year),
-					last_biology_year,
-					str(
-						started_ages.has(
-							npc_key
-						)
-					),
-					(
-						"advance"
-						if int(npc.age) < expected_age
-						else (
-							"correct_down"
-							if (
-								int(npc.age) > expected_age
-								and not allow_multi_year_jump
-							)
-							else "noop_counted_as_aged"
-						)
-					),
-					str(
-						selected_from_priority
-					)
-				]
-			)
-
 		if int(npc.age) < expected_age:
 			npc.age = expected_age
 			state ["aged_npcs"] = int(
@@ -1246,19 +1223,26 @@ func _step_world_age_npcs(
 		# (frozen at 26, at 32, and so on). Re-snapshot here, where we have the npc
 		# and know its age just changed. ensure_person_entity() overwrites the
 		# registry entry, so this refreshes age, alive and stats together.
-		if (
-			int(npc.age) != previous_age
-			and gs.relationship_graph_contract_engine != null
-			and gs.relationship_graph_contract_engine.has_method(
-				"ensure_person_entity"
-			)
-		):
-			gs.relationship_graph_contract_engine.ensure_person_entity(
-				npc,
-				{
-					"source": "world_engine.age_npcs"
-				}
-			)
+		# TIMING PROBE: the aging drain manages ~1 NPC per 1-2ms budget in the
+		# future era, with only 40 NPCs in the world. That is orders of magnitude
+		# slower than a field write, so something per-NPC is genuinely expensive.
+		# Three candidates run per NPC: ensure_person_entity (which rewrites
+		# gs.canonical_relationship_graph on every call), _emit_npc_age_event, and
+		# enforce_mortal_age_cap. Measure all three rather than assume.
+		var probe_entity_us: int = 0
+		var probe_event_us: int = 0
+		var probe_cap_us: int = 0
+		var probe_t0: int = Time.get_ticks_usec()
+
+		# Collect rather than write. ensure_entity() reassigns the whole relationship
+		# graph per call (~4.4ms measured, fixed cost regardless of NPC), so doing
+		# it inside the loop cost ~175ms/year for 40 NPCs and blew the drain's
+		# 1-2ms budget on the very first NPC. Flushed once after the loop via
+		# ensure_person_entities_batch().
+		if int(npc.age) != previous_age:
+			pending_entity_refresh.append(npc)
+
+		probe_entity_us = Time.get_ticks_usec() - probe_t0
 
 		npc.last_biology_year = target_year
 
@@ -1274,16 +1258,25 @@ func _step_world_age_npcs(
 				target_year
 			)
 
-		if _should_emit_npc_age_event(
+		var probe_t1: int = Time.get_ticks_usec()
+		var should_emit: bool = _should_emit_npc_age_event(
 			npc,
 			previous_age,
 			int(npc.age)
-		):
+		)
+		var predicate_us: int = Time.get_ticks_usec() - probe_t1
+
+		# The two segments inside _emit_npc_age_event total ~155us, yet the block
+		# measures ~23000us. Split the predicate from the emit to find which side
+		# the missing ~22ms is on -- neither reads as expensive, so one of them is
+		# doing something not visible in its own source.
+		if should_emit:
 			_emit_npc_age_event(
 				npc,
 				previous_age,
 				int(npc.age),
-				target_year
+				target_year,
+				pass_player_facts
 			)
 			state ["event_count"] = int(
 				state.get(
@@ -1291,6 +1284,10 @@ func _step_world_age_npcs(
 					0
 				)
 			) + 1
+
+		probe_event_us = Time.get_ticks_usec() - probe_t1
+
+		var probe_t2: int = Time.get_ticks_usec()
 
 		if gs.health_engine != null:
 			gs.health_engine.enforce_mortal_age_cap(
@@ -1303,6 +1300,28 @@ func _step_world_age_npcs(
 				)
 			) + 1
 
+		probe_cap_us = Time.get_ticks_usec() - probe_t2
+
+		# Accumulate rather than print. Printing per NPC was itself the cost: with
+		# Godot File Logging enabled, EraLog.truth -> print() flushes to disk
+		# synchronously, which is what produced the bogus 22ms-per-NPC figure.
+		# One line per pass, emitted by the caller.
+		state ["probe_entity_us_total"] = int(
+			state.get("probe_entity_us_total", 0)
+		) + probe_entity_us
+		state ["probe_event_us_total"] = int(
+			state.get("probe_event_us_total", 0)
+		) + probe_event_us
+		state ["probe_cap_us_total"] = int(
+			state.get("probe_cap_us_total", 0)
+		) + probe_cap_us
+		state ["probe_predicate_us_total"] = int(
+			state.get("probe_predicate_us_total", 0)
+		) + predicate_us
+		state ["probe_npcs_timed"] = int(
+			state.get("probe_npcs_timed", 0)
+		) + 1
+
 		if npc.has_method(
 			"set_meta"
 		):
@@ -1310,6 +1329,80 @@ func _step_world_age_npcs(
 				"last_world_engine_biology_completed_year",
 				target_year
 			)
+
+	# Single graph write for every entity changed this pass.
+	var batch_t0: int = Time.get_ticks_usec()
+	var batch_written: int = 0
+
+	if (
+		not pending_entity_refresh.is_empty()
+		and gs.relationship_graph_contract_engine != null
+		and gs.relationship_graph_contract_engine.has_method(
+			"ensure_person_entities_batch"
+		)
+	):
+		batch_written = int(
+			gs.relationship_graph_contract_engine.ensure_person_entities_batch(
+				pending_entity_refresh,
+				{
+					"source": "world_engine.age_npcs"
+				}
+			)
+		)
+
+	var batch_us: int = Time.get_ticks_usec() - batch_t0
+
+	state ["probe_batch_us_total"] = int(
+		state.get("probe_batch_us_total", 0)
+	) + batch_us
+	state ["probe_batch_written_total"] = int(
+		state.get("probe_batch_written_total", 0)
+	) + batch_written
+
+	# ONE line per pass. Per-NPC printing was the measurement artifact -- with File
+	# Logging on, each print() is a synchronous disk flush, so instrumenting the
+	# loop made the loop expensive and every timing taken this way was inflated.
+	# Gated: fires once per drain pass, and a single age-up makes ~40 passes.
+	# Set scenario_state["eralife_perf_trace"] = true to re-enable when profiling.
+	# The threshold-gated probes (NPC_EVENT_TAIL, NARRATIVE_TIMING,
+	# MEMORY_COMMIT_TIMING, WORLD_FEED_TIMING) stay on permanently -- they only
+	# print when something is slow, so they are regression detectors, not noise.
+	if (
+		int(state.get("probe_npcs_timed", 0)) > 0
+		and gs != null
+		and typeof(gs.scenario_state) == TYPE_DICTIONARY
+		and bool(
+			gs.scenario_state.get(
+				"eralife_perf_trace",
+				false
+			)
+		)
+	):
+		EraLog.truth(
+			"ERALIFE_NPC_PASS_PROFILE|year=%d|npcs=%d|entity_us=%d|batch_us=%d|batch_written=%d|event_us=%d|predicate_us=%d|cap_us=%d|accounted_us=%d"
+			% [
+				target_year,
+				int(state.get("probe_npcs_timed", 0)),
+				int(state.get("probe_entity_us_total", 0)),
+				int(state.get("probe_batch_us_total", 0)),
+				int(state.get("probe_batch_written_total", 0)),
+				int(state.get("probe_event_us_total", 0)),
+				int(state.get("probe_predicate_us_total", 0)),
+				int(state.get("probe_cap_us_total", 0)),
+				int(state.get("probe_entity_us_total", 0))
+				+ int(state.get("probe_event_us_total", 0))
+				+ int(state.get("probe_predicate_us_total", 0))
+				+ int(state.get("probe_cap_us_total", 0))
+			]
+		)
+
+		state ["probe_entity_us_total"] = 0
+		state ["probe_batch_us_total"] = 0
+		state ["probe_batch_written_total"] = 0
+		state ["probe_event_us_total"] = 0
+		state ["probe_predicate_us_total"] = 0
+		state ["probe_cap_us_total"] = 0
+		state ["probe_npcs_timed"] = 0
 
 	state ["cursor"] = age_cursor
 	state ["priority_source_index"] = priority_source_index
@@ -3489,12 +3582,24 @@ func _world_engine_personally_relevant(npc: Person) -> bool:
 
 	return false
 
-func _world_engine_relation_label(npc: Person) -> String:
+func _world_engine_relation_label(
+	npc: Person,
+	player_facts_override: Dictionary = {}
+) -> String:
+	# player_facts_override is the player's fact dictionary, built once by the
+	# caller when resolving labels for many NPCs in a single pass. Without it,
+	# get_relationship_label_between() rebuilds it per NPC.
 	if gs == null or gs.player == null or npc == null:
 		return ""
 
 	if gs.has_method("get_relationship_label_between"):
-		var label: String = str(gs.get_relationship_label_between(gs.player, npc)).strip_edges()
+		var label: String = str(
+			gs.get_relationship_label_between(
+				gs.player,
+				npc,
+				player_facts_override
+			)
+		).strip_edges()
 		if label != "" and label != "Stranger":
 			return label
 
@@ -4924,7 +5029,8 @@ func _emit_npc_age_event(
 	npc: Person,
 	previous_age: int,
 	new_age: int,
-	target_year: int
+	target_year: int,
+	player_facts_override: Dictionary = {}
 ) -> void:
 	if gs == null or npc == null:
 		return
@@ -4940,11 +5046,14 @@ func _emit_npc_age_event(
 			npc
 		)
 	)
+	var label_t0: int = Time.get_ticks_usec()
 	var relation_label: String = (
 		_world_engine_relation_label(
-			npc
+			npc,
+			player_facts_override
 		)
 	)
+	var label_us: int = Time.get_ticks_usec() - label_t0
 	var world_text: String = "%s turned %d." % [
 		full_name,
 		new_age
@@ -4983,11 +5092,21 @@ func _emit_npc_age_event(
 		"age": new_age
 	}
 
+	# TIMING PROBE: for personally-relevant NPCs this emitter costs ~22ms; for
+	# everyone else ~10us. The difference is that relevant entries are not
+	# diary-suppressed. Narrow which segment actually spends the time rather than
+	# inferring it -- the label lookup, push_world_feed's dedupe, and the
+	# MainScene signal handler have each been checked and are cheap.
+	var feed_t0: int = Time.get_ticks_usec()
+
 	if gs.has_method("push_world_feed"):
 		gs.push_world_feed(
 			world_text,
 			entry
 		)
+
+	var feed_us: int = Time.get_ticks_usec() - feed_t0
+
 
 
 
@@ -5091,6 +5210,12 @@ func _emit_npc_age_event(
 			}
 		)
 
+	# This diary write runs ONLY for personally-relevant NPCs -- which is exactly
+	# the set that measures 22-61ms while everyone else costs 10us. My earlier
+	# probes covered only the first ~50 lines of this 215-line function and never
+	# reached here.
+	var diary_t0: int = Time.get_ticks_usec()
+
 	if (
 		personally_relevant
 		and player_text != ""
@@ -5111,12 +5236,27 @@ func _emit_npc_age_event(
 			}
 		)
 
+	var diary_us: int = Time.get_ticks_usec() - diary_t0
+	var school_t0: int = Time.get_ticks_usec()
+
 	_world_engine_maybe_log_family_school_transition(
 		npc,
 		previous_age,
 		new_age,
 		target_year
 	)
+
+	var school_us: int = Time.get_ticks_usec() - school_t0
+
+	if diary_us + school_us > 2000:
+		EraLog.truth(
+			"ERALIFE_NPC_EVENT_TAIL|npc_id=%d|diary_us=%d|school_us=%d"
+			% [
+				int(npc.id),
+				diary_us,
+				school_us
+			]
+		)
 
 
 

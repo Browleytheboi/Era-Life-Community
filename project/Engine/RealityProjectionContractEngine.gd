@@ -1389,6 +1389,64 @@ func begin_resident_projection(
 				signature
 			)
 
+		# FIX: force_rebuild ERASES in-flight work, and there is more than one
+		# caller. MainScene's age-up pump drives a rebuild across ~90-150 frames;
+		# RealityResidencyManager._service_ready_checkpoint_tail() independently
+		# calls begin on the SAME signature whenever a ready record has a lens
+		# attached. Whichever arrives second destroyed the first one's work
+		# mid-step, which is why the relationships surface went cold at
+		# installed=4/5 and the stall watchdog reported
+		# resident_projection_stalled_after_0_steps.
+		#
+		# The age-up transition lock cannot cover this: it gates the BUTTON, and
+		# the residency tail is not a button press. Mutual exclusion has to live
+		# here, keyed by signature, where every caller passes through.
+		#
+		# A rebuild is refused while another rebuild is actively being stepped.
+		# "Actively" means it has been stepped recently -- a driver that abandons
+		# its work must not lock the signature forever.
+		var in_flight_since_ms: int = int(
+			existing_work.get(
+				"last_stepped_at_ms",
+				0
+			)
+		)
+		var in_flight_idle_ms: int = (
+			int(
+				Time.get_ticks_msec()
+			) - in_flight_since_ms
+		)
+		var rebuild_in_flight: bool = (
+			force_rebuild
+			and in_flight_since_ms > 0
+			and in_flight_idle_ms < 4000
+			and not bool(
+				existing_work.get(
+					"complete",
+					false
+				)
+			)
+		)
+
+		if rebuild_in_flight:
+			EraLog.truth(
+				"ERALIFE_PROJECTION_REBUILD_REFUSED|signature=%s|source=%s|idle_ms=%d|reason=rebuild_already_in_flight"
+				% [
+					signature,
+					str(
+						context.get(
+							"source",
+							"-"
+						)
+					),
+					in_flight_idle_ms
+				]
+			)
+
+			return projection_status(
+				signature
+			)
+
 		projection_work_by_signature.erase(
 			signature
 		)
@@ -2211,6 +2269,19 @@ func step_resident_projection(
 		return projection_status(
 			clean_signature
 		)
+
+	# Stamp liveness for the rebuild exclusion in begin_resident_projection().
+	# A signature that is actively being stepped must not have its work erased out
+	# from under the driver; one that has been abandoned must not lock the
+	# signature forever, which is why this is a timestamp rather than a flag.
+	work [
+		"last_stepped_at_ms"
+	] = int(
+		Time.get_ticks_msec()
+	)
+	projection_work_by_signature [
+		clean_signature
+	] = work
 
 	var runtime = work.get(
 		"runtime_ref",
@@ -3367,79 +3438,93 @@ func _run_projection_step(
 	# contract is empty / never renderable. This line distinguishes those and is
 	# placed ABOVE both the pending branch and the completion branch, so a step
 	# that silently defers forever still reports.
-	EraLog.truth(
-		"ERALIFE_PROJECTION_STEP|signature=%s|step=%s|actor_id=%d|empty=%s|pending=%s|groups=%d|sections=%d|progress=%s|final_emitted=%s|progressive_emitted=%s"
-		% [
-			str(
-				work.get(
-					"signature",
-					""
-				)
-			),
-			step_id,
-			int(
-				work.get(
-					"actor_id",
-					-1
-				)
-			),
-			str(
-				surface_contract.is_empty()
-			),
-			str(
-				bool(
-					surface_contract.get(
-						"projection_pending",
-						false
-					)
-				)
-			),
-			_array(
-				surface_contract.get(
-					"groups",
-					[]
-				)
-			).size(),
-			_dict(
-				surface_contract.get(
-					"section_contracts",
-					{}
-				)
-			).size(),
-			str(
-				surface_contract.get(
-					"projection_progress",
-					"-"
-				)
-			),
-			str(
-				bool(
-					_dict(
-						work.get(
-							"surface_signal_emitted",
-							{}
-						)
-					).get(
-						step_id,
-						false
-					)
-				)
-			),
-			str(
-				bool(
-					_dict(
-						work.get(
-							"progressive_surface_signal_emitted",
-							{}
-						)
-					).get(
-						step_id,
-						false
-					)
-				)
+	# Gated: this fires once per projection step, ~90 times per age-up. Printing is
+	# not free even without File Logging, and it was distorting the very timings it
+	# was added to explain. Set eralife_projection_step_trace in scenario_state to
+	# re-enable when needed.
+	if (
+		runtime != null
+		and typeof(runtime.scenario_state) == TYPE_DICTIONARY
+		and bool(
+			runtime.scenario_state.get(
+				"eralife_projection_step_trace",
+				false
 			)
-		]
-	)
+		)
+	):
+		EraLog.truth(
+			"ERALIFE_PROJECTION_STEP|signature=%s|step=%s|actor_id=%d|empty=%s|pending=%s|groups=%d|sections=%d|progress=%s|final_emitted=%s|progressive_emitted=%s"
+			% [
+				str(
+					work.get(
+						"signature",
+						""
+					)
+				),
+				step_id,
+				int(
+					work.get(
+						"actor_id",
+						-1
+					)
+				),
+				str(
+					surface_contract.is_empty()
+				),
+				str(
+					bool(
+						surface_contract.get(
+							"projection_pending",
+							false
+						)
+					)
+				),
+				_array(
+					surface_contract.get(
+						"groups",
+						[]
+					)
+				).size(),
+				_dict(
+					surface_contract.get(
+						"section_contracts",
+						{}
+					)
+				).size(),
+				str(
+					surface_contract.get(
+						"projection_progress",
+						"-"
+					)
+				),
+				str(
+					bool(
+						_dict(
+							work.get(
+								"surface_signal_emitted",
+								{}
+							)
+						).get(
+							step_id,
+							false
+						)
+					)
+				),
+				str(
+					bool(
+						_dict(
+							work.get(
+								"progressive_surface_signal_emitted",
+								{}
+							)
+						).get(
+							step_id,
+							false
+						)
+					)
+				)
+			]
+		)
 
 	if bool(
 		surface_contract.get(

@@ -1068,3 +1068,93 @@ func _safe_dictionary(value: Variant) -> Dictionary:
 
 func _safe_array(value: Variant) -> Array:
 	return value if typeof(value) == TYPE_ARRAY else []
+
+func ensure_person_entities_batch(people: Array, context: Dictionary = {}) -> int:
+	# Batched form of ensure_person_entity().
+	#
+	# ensure_entity() reassigns gs.canonical_relationship_graph on EVERY call.
+	# Measured at ~4.4ms per call regardless of NPC -- a fixed cost, i.e. the whole
+	# graph being copied. Called once per NPC per year that is ~175ms/year for 40
+	# NPCs, which alone exceeded the aging drain's 1-2ms budget on the first NPC
+	# and is why the drain never completed.
+	#
+	# This writes the registry and the graph's entity table for every person, then
+	# reassigns the graph ONCE. Same end state, one copy instead of N.
+	if gs == null or people.is_empty():
+		return 0
+
+	_ensure_state()
+
+	var graph_state: Dictionary = graph()
+	var entities_raw: Variant = graph_state.get(
+		"entities",
+		{}
+	)
+	var entities: Dictionary = (
+		entities_raw as Dictionary
+		if typeof(entities_raw) == TYPE_DICTIONARY
+		else {}
+	)
+	var written: int = 0
+
+	for raw_person in people:
+		var person: Person = raw_person as Person
+
+		if person == null:
+			continue
+
+		var entity_contract: Dictionary = {}
+
+		if (
+			gs.human_contract_engine != null
+			and gs.human_contract_engine.has_method(
+				"define_entity_for_person"
+			)
+		):
+			entity_contract = gs.human_contract_engine.define_entity_for_person(
+				person,
+				context
+			)
+		else:
+			entity_contract = {
+				"entity_id": "human:%d" % int(person.id),
+				"entity_kind": "human",
+				"entity_type": "human",
+				"source_person_id": int(person.id),
+				"display_name": "%s %s" % [
+					str(person.first_name),
+					str(person.last_name)
+				],
+				"age": int(person.age),
+				"alive": bool(person.alive)
+			}
+
+		if entity_contract.is_empty():
+			continue
+
+		var clean_entity: Dictionary = entity_contract.duplicate(false)
+		var entity_id: String = str(
+			clean_entity.get(
+				"entity_id",
+				""
+			)
+		).strip_edges()
+
+		if entity_id == "":
+			continue
+
+		clean_entity ["registered_by"] = ENGINE_SCHEMA
+		clean_entity ["registered_at_ms"] = int(
+			Time.get_ticks_msec()
+		)
+		clean_entity ["context"] = context.duplicate(false)
+
+		gs.entity_registry [entity_id] = clean_entity.duplicate(false)
+		entities [entity_id] = clean_entity.duplicate(false)
+		written += 1
+
+	if written > 0:
+		graph_state ["entities"] = entities
+		gs.canonical_relationship_graph = graph_state
+
+	return written
