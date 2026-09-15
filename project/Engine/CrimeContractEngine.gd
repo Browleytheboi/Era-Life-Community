@@ -4335,6 +4335,7 @@ func commit_weapon_action(
 		)
 	)
 
+
 	if bool(
 		report.get(
 			"success",

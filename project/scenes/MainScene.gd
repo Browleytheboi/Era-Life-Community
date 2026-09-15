@@ -31723,6 +31723,45 @@ func _emit_pending_popup_contract_from_action_result(result: Dictionary, context
 		gs.pending_situations_engine = PendingSituationsEngine.new(gs)
 
 	var report: Dictionary = gs.scenario_popup_contract_engine.emit_from_action_result(result, context)
+
+	# DIAGNOSTIC: the freeze reproduces when a target DIES while several pending
+	# situations are already queued and unresolved. Killing a victim with an empty
+	# queue worked fine earlier. Report each emit with the queue depth and whether
+	# this result was a death, so the correlation is measured rather than assumed.
+	EraLog.truth(
+		"ERALIFE_PENDING_EMIT|success=%s|target_died=%s|source=%s|queue_before=%d"
+		% [
+			str(
+				report.get(
+					"success",
+					false
+				)
+			),
+			str(
+				result.get(
+					"target_died",
+					false
+				)
+			),
+			str(
+				context.get(
+					"source",
+					"-"
+				)
+			),
+			(
+				gs.pending_situations_engine.get_pending_count()
+				if (
+					gs.pending_situations_engine != null
+					and gs.pending_situations_engine.has_method(
+						"get_pending_count"
+					)
+				)
+				else -1
+			)
+		]
+	)
+
 	if bool(report.get("success", false)):
 		set_meta("pending_situations_dirty", true)
 		set_meta("pending_situations_last_emit_ms", int(Time.get_ticks_msec()))
@@ -66478,6 +66517,19 @@ func _sync_runtime_floating_hud_layering() -> void:
 		)
 	)
 
+	# DIAGNOSTIC: pinning why food/restaurant HUD icons stay hidden past their unlock age.
+	EraLog.truth(
+		"ERALIFE_FOOD_HUD_LAYERING|food=%s|restaurant=%s|actor_matches_snapshot=%s|snapshot_actor_id=%d|current_actor_id=%d|surface_allows=%s"
+		% [
+			str(visibility_snapshot.get("food", false)),
+			str(visibility_snapshot.get("restaurant", false)),
+			str(visibility_snapshot.get("actor_matches_snapshot", false)),
+			int(visibility_snapshot.get("snapshot_actor_id", -1)),
+			int(visibility_snapshot.get("current_actor_id", -1)),
+			str(surface_allows_runtime_buttons)
+		]
+	)
+
 	if not surface_allows_runtime_buttons:
 		if _spawn_ready_runtime_hud_shell_layering_active():
 			_sync_runtime_floating_hud_layering_for_spawn_shell(
@@ -70971,6 +71023,22 @@ func _update_food_lifestyle_hud() -> void:
 
 	var show_food: bool = base_visible and _food_lifestyle_food_hub_available()
 	var show_restaurant: bool = base_visible and _food_lifestyle_restaurant_hub_available()
+
+	# DIAGNOSTIC: pinning why food/restaurant HUD icons stay hidden past their unlock age.
+	EraLog.truth(
+		"ERALIFE_FOOD_HUD_UPDATE|age=%d|era=%s|base_visible=%s|blocked_by_age_up=%s|allow_embedded=%s|surface_allows=%s|has_modal_blocker=%s|show_food=%s|show_restaurant=%s"
+		% [
+			int(gs.player.age) if (gs != null and gs.player != null) else -1,
+			_food_lifestyle_current_era_name_for_mainscene(),
+			str(base_visible),
+			str(blocked_by_age_up_loading),
+			str(allow_embedded_life_view),
+			str(surface_allows_runtime_buttons),
+			str(has_modal_blocker),
+			str(show_food),
+			str(show_restaurant)
+		]
+	)
 
 	food_lifestyle_hud_button.visible = show_food
 	food_lifestyle_hud_button.disabled = not show_food
@@ -123773,6 +123841,29 @@ func _render_crime_hub_route_result(
 		result
 	)
 
+	# FIX: crime results were never shown to the player. The engine resolves the
+	# attack fully -- WEAPON_RESOLVE returns success=true with harm_amount,
+	# health_after, target_died and case_report, and the homicide case DOES appear
+	# under Cases -- and it also returns popup_title / popup_text / popup_footer /
+	# text. Measured: those fields survive reduction intact
+	# (reduced_has_popup=true, reduced_keys=27 for commit_weapon_action).
+	#
+	# This function simply never looked at them. It only handled section
+	# navigation and hub rebuilds, so the result text was produced, routed
+	# correctly, and dropped. Every other action result in the game goes through
+	# _maybe_show_action_result_popup(); the crime hub route did not.
+	if (
+		routed.has(
+			"popup_text"
+		)
+		or routed.has(
+			"text"
+		)
+	):
+		_maybe_show_action_result_popup(
+			routed
+		)
+
 	var section_contract: Dictionary = MainSceneHelpers._safe_dictionary(
 		routed.get(
 			"section_contract",
@@ -123913,6 +124004,28 @@ func _on_crime_panel_close_requested() -> void:
 		"life",
 		"crime_hub_close_return_to_life"
 	)
+
+	# FIX: same defect as the relationships and school close handlers.
+	# _apply_main_tab_press_frame_nav_state() only manages nav flags -- it does not
+	# show or render anything -- and the hubs hide output_label when they take the
+	# surface. So the Life tab looked selected while the panel stayed blank, and
+	# age-ups committed correctly but were not displayed until Life was clicked
+	# manually.
+	#
+	# Visibility must be restored BEFORE the render: the render path skips work
+	# when the label is hidden.
+	#
+	# These are the only three hubs that close back to Life this way (grep
+	# _apply_main_tab_press_frame_nav_state for "_close"); all three are now fixed.
+	if output_label != null and is_instance_valid(output_label):
+		output_label.visible = true
+		output_label.scroll_active = true
+		output_label.bbcode_enabled = true
+
+	_invalidate_life_diary_contract_render_cache(
+		"crime_hub_panel_close"
+	)
+	_render_life_diary_panel()
 
 func _on_crime_panel_section_requested(
 	section_id: String
@@ -140453,6 +140566,17 @@ func _complete_age_up_tail_runtime_result(result: Dictionary, reason: String = "
 	_show_age_up_output(result, false, "tail_runtime_complete")
 	call_deferred("_scroll_life_diary_to_bottom")
 
+	# FIX: runtime_hud_visibility_snapshot now gets rebuilt every year (see
+	# AgeUpRuntimeEngine._run_narrative_and_presentation), but nothing here ever
+	# told the actual HUD buttons to redraw from it -- so a newly-eligible hub
+	# icon sat correctly computed in scenario_state but never appeared on
+	# screen until something unrelated (opening and closing any hub) happened
+	# to force a resync. Same calls _close_rick_weapon_shop_popup already makes
+	# after its own state changes.
+	call_deferred("_restore_runtime_hud_button_shells_after_surface_change", "age_up_complete_restore_actor_huds")
+	call_deferred("_reveal_spawn_ready_runtime_hud_buttons_if_existing", "age_up_complete_existing_hud_reveal")
+	call_deferred("_sync_runtime_floating_hud_layering")
+
 func _arm_zero_frame_age_up_visible_observation_service() -> void:
 	var tree:= Engine.get_main_loop() as SceneTree
 
@@ -141066,15 +141190,22 @@ func _on_age_up_loading_exit_finished() -> void:
 				age_up_loading_overlay.visible = true
 				age_up_loading_overlay.modulate = Color(1.0, 1.0, 1.0, 1.0)
 
+			# DIAGNOSTIC: pinning why the HUD-refresh fix block never seems to run.
+			EraLog.truth("ERALIFE_AGE_UP_EXIT_BRANCH|branch=still_busy_bail_no_deferred_tail")
 			return
 
 	if not age_up_loading_runtime_active and not bool(get_meta("age_up_transition_busy", false)):
 		_age_up_truth_probe_finish("exit_finished_return_not_active")
+		# DIAGNOSTIC: pinning why the HUD-refresh fix block never seems to run.
+		EraLog.truth("ERALIFE_AGE_UP_EXIT_BRANCH|branch=return_not_active_nothing_to_do")
 		call_deferred("_run_post_loading_idle_refresh")
 		call_deferred("_update_player_stats_overlay")
 		return
 
 	var should_finalize_post_loading: bool = bool(get_meta("age_up_post_loading_finalize_pending", false))
+
+	# DIAGNOSTIC: pinning why the HUD-refresh fix block never seems to run.
+	EraLog.truth("ERALIFE_AGE_UP_EXIT_BRANCH|branch=reached_real_completion_fix_block_should_fire")
 
 	_hide_age_up_loading_overlay()
 
@@ -141093,6 +141224,25 @@ func _on_age_up_loading_exit_finished() -> void:
 	call_deferred("_force_age_up_life_diary_surface_after_handoff", "age_up_loading_exit_finished")
 	call_deferred("_update_player_stats_overlay")
 	call_deferred("_try_surface_controlled_death_after_age_up", "age_up_loading_exit_finished")
+
+	# FIX: runtime_hud_visibility_snapshot gets rebuilt every year (see
+	# AgeUpRuntimeEngine._run_narrative_and_presentation), but nothing told the
+	# actual HUD buttons to redraw from it. The original attempt at this fix was
+	# placed in _complete_age_up_tail_runtime_result(), which has zero callers
+	# anywhere in the project (dead code) -- this is the real, live completion
+	# path, confirmed by call sites into _on_age_up_loading_exit_finished.
+	call_deferred("_restore_runtime_hud_button_shells_after_surface_change", "age_up_complete_restore_actor_huds")
+	call_deferred("_reveal_spawn_ready_runtime_hud_buttons_if_existing", "age_up_complete_existing_hud_reveal")
+	# FIX: _restore_runtime_hud_button_shells_after_surface_change() above computes
+	# the right answer but never actually lands it where _sync_runtime_floating_hud_layering()
+	# reads from -- confirmed via diagnostic logging that its write never sticks in
+	# the persisted runtime_hud_visibility_snapshot the layering pass consults. Every
+	# hub-close path that correctly refreshes icons (e.g. bending hub close) instead
+	# calls _persist_runtime_hud_visibility_snapshot(), the canonical recompute-and-save
+	# function. Calling it here too, right before the layering sync, so age-up matches
+	# the same working pattern.
+	call_deferred("_persist_runtime_hud_visibility_snapshot", "age_up_complete")
+	call_deferred("_sync_runtime_floating_hud_layering")
 
 	var now_ms: int = int(Time.get_ticks_msec())
 	var restore_hold_frames: int = 6 if should_finalize_post_loading else 4
@@ -186338,6 +186488,27 @@ func _deferred_run_age_up_from_button() -> void:
 			]
 		)
 
+		# Prison sentences tick here, NOT inside the age-up walker.
+		#
+		# CrimeEngine.reduce_prison_time()'s only caller is lane 1 of the
+		# "player_phase_contract" walker, and that phase is not in the live phase
+		# order (see handoff: two phase orders disagree), so it never ran -- the
+		# sentence stayed at 0 and release never happened.
+		#
+		# Calling it from inside the year_and_era_mutation walker's completion lane
+		# CRASHED with signal 11: on release it calls queue_year_resolution_popup(),
+		# _clear_player_from_justice_institutions() and
+		# _flag_justice_projection_dirty(), and invalidating the projection while
+		# the runtime is mid-phase re-enters. Here it runs after the intent has
+		# committed, once per age-up, outside any walker.
+		if (
+			gs.crime_engine != null
+			and gs.crime_engine.has_method(
+				"reduce_prison_time"
+			)
+		):
+			gs.crime_engine.reduce_prison_time()
+
 		# Claim the transition lock. Released ONLY in
 		# _finish_age_up_projection_pump(), which every pump exit path routes
 		# through, or by the frame cap in _on_button_pressed().
@@ -186558,6 +186729,18 @@ func _deferred_run_age_up_from_button() -> void:
 		+ "|ui_waited_for_tail=false"
 		+ "|at_ms=" + str(Time.get_ticks_msec())
 	)
+
+	# FIX: this is the confirmed-live age-up completion path (age-ups run
+	# zero-frame, bypassing the loading overlay entirely -- see
+	# age_up_loading_overlay_bypassed above -- which is why the overlay's own
+	# exit-finished callback never fires and every fix placed there was inert).
+	# Nothing in this function ever refreshed runtime_hud_visibility_snapshot or
+	# told the HUD buttons to redraw from it, so a newly-eligible icon (food,
+	# restaurant, boxing, etc.) sat correctly computed but invisible until an
+	# unrelated hub visit forced a resync via _persist_runtime_hud_visibility_snapshot().
+	# Calling the same working pattern here.
+	call_deferred("_persist_runtime_hud_visibility_snapshot", "age_up_complete")
+	call_deferred("_sync_runtime_floating_hud_layering")
 
 
 func _on_life_button_pressed():
@@ -213569,7 +213752,22 @@ func _hub_panel_route_result(
 
 
 
-		for key in [
+		# FIX: this took the FIRST non-empty branch, and "result" is checked before
+		# "route_report". For begin_weapon_action the report carries both: "result"
+		# holds CrimeContractEngine's 5-key return (success, mode, open_crime_hub,
+		# crime_hub_section, interaction_contract -- no section_contract), while
+		# "route_report" holds the crime hub's 20-key wrapper WITH section_contract.
+		# Descending into "result" reached a level with interaction_contract, which
+		# is a leaf marker, so reduction stopped there and the section contract was
+		# discarded. Navigation is gated on it being non-empty, so arming a weapon
+		# reported success=true and never switched to the Targets tab.
+		#
+		# open_crime_weapon_picker worked only by accident: its "result" is empty,
+		# so the loop fell through to "route_report".
+		#
+		# Prefer a branch that actually carries a section_contract; otherwise keep
+		# the original first-non-empty order.
+		var branch_keys: Array = [
 			"result",
 			"route_report",
 			"engine_report",
@@ -213577,7 +213775,38 @@ func _hub_panel_route_result(
 			"commit_report",
 			"command_report",
 			"payload"
-		]:
+		]
+		var preferred_key: String = ""
+
+		for key in branch_keys:
+			var preferred_raw: Variant = cursor.get(
+				key,
+				{}
+			)
+
+			if typeof(preferred_raw) != TYPE_DICTIONARY:
+				continue
+
+			var preferred_nested: Dictionary = (
+				preferred_raw as Dictionary
+			)
+
+			if preferred_nested.is_empty():
+				continue
+
+			if not MainSceneHelpers._safe_dictionary(
+				preferred_nested.get(
+					"section_contract",
+					{}
+				)
+			).is_empty():
+				preferred_key = key
+				break
+
+		for key in branch_keys:
+			if preferred_key != "" and key != preferred_key:
+				continue
+
 			var nested_raw: Variant = cursor.get(
 				key,
 				{}
@@ -219774,6 +220003,19 @@ func _finish_post_age_up_ui_refresh_deferred(
 		"post_age_up_deferred_%s" % refresh_mode
 	)
 
+	# FIX: a newly-eligible sidebar icon (food/restaurant, boxing, superpower,
+	# power, etc.) never appeared the year it actually unlocked -- only after
+	# leaving some unrelated hub, because _restore_full_runtime_hud_visibility_
+	# from_truth() (the function that actually recomputes eligibility live and
+	# repaints the buttons) was only ever called from scene entry, spawn, and
+	# the general "return to main screen" handler that hub-close happens to go
+	# through. This is the actual age-up completion tail (reached via
+	# _show_age_up_output -> _force_post_age_up_ui_refresh -> here on every
+	# age-up), so call the same real refresh here too.
+	_restore_full_runtime_hud_visibility_from_truth(
+		"age_up_complete_%s" % refresh_mode
+	)
+
 	if not loading_safe:
 		_request_life_diary_focus_latest_year(
 			"post_age_up_deferred_%s" % refresh_mode
@@ -221274,6 +221516,19 @@ func _restore_runtime_hud_button_shells_after_surface_change(reason: String = "r
 	var show_superpower: bool = surface_allows_runtime_buttons and _player_has_superpower_hub_access()
 	var show_power: bool = surface_allows_runtime_buttons and _player_has_power_hub_access()
 	var show_wizard: bool = surface_allows_runtime_buttons and MainSceneLogic._player_has_visible_wizard_magic(gs)
+
+	# DIAGNOSTIC: pinning why food/restaurant HUD icons stay hidden past their unlock age.
+	EraLog.truth(
+		"ERALIFE_FOOD_HUD_RESTORE|reason=%s|year=%d|era=%s|show_food=%s|show_restaurant=%s|surface_allows=%s"
+		% [
+			reason,
+			int(gs.year) if gs != null else -1,
+			_food_lifestyle_current_era_name_for_mainscene(),
+			str(show_food),
+			str(show_restaurant),
+			str(surface_allows_runtime_buttons)
+		]
+	)
 
 	_apply_zero_frame_hud_button_shell(belongings_hud_button, show_belongings)
 	_apply_zero_frame_hud_button_shell(bending_hud_button, show_bending)

@@ -4,6 +4,11 @@ class_name MemoryEngine
 const MEMORY_PACKET_SCHEMA:= "eralife.memory_packet"
 const UPCE_MEMORY_PACKET_SCHEMA:= "eralife.upce_memory_packet"
 const MAX_STRUCTURED_MEMORY_PER_PERSON:= 140
+# FIX: matches the cap added to ConsciousnessEngine.remember() -- person.memories
+# had no size limit anywhere, so it grew for a person's entire life and made
+# every dedupe scan against it slower over time. Same 250-entry FIFO cap here
+# keeps this second write path from re-introducing the unbounded growth.
+const MAX_PLAIN_MEMORY_SIZE:= 250
 
 var gs
 
@@ -24,6 +29,8 @@ func remember(person_id: int, event: String):
 	var person: Person = _person_by_id(person_id)
 	if person != null and typeof(person.memories) == TYPE_ARRAY:
 		person.memories.append(event)
+		while person.memories.size() > MAX_PLAIN_MEMORY_SIZE:
+			person.memories.pop_front()
 
 func remember_packet(person_id: int, packet: Dictionary) -> Dictionary:
 	if gs == null:

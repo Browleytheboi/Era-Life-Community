@@ -1746,8 +1746,17 @@ func _arm_crime_resident_actor_probe(
 			continue
 
 
-		if section_id == "targets":
-			continue
+		# FIX: "targets" was skipped by the temporal staleness sweep entirely, so
+		# its surface was never marked dirty when the actor's age changed. Target
+		# cards decorated while the actor was under 16 kept their "Requires age 16"
+		# notice indefinitely -- verified with ERALIFE_CRIME_TARGET_AGE, which
+		# showed the decorator correctly reading actor_age=17 and marking nothing
+		# while the stale cards were still on screen.
+		#
+		# The section presumably skipped the sweep because its rows are refreshed
+		# through queue_crime_target_cache_refresh() instead. But that path is
+		# keyed on the target roster changing, not on the ACTOR's age, and target
+		# availability now depends on actor age.
 
 		var resident_raw: Variant = surfaces.get(
 			section_id,
@@ -5292,6 +5301,21 @@ func _begin_resident_heavy_section_projection(
 		)
 	)
 
+	# DIAGNOSTIC: chasing a weapons-row duplication bug that only shows up
+	# after a weapon-fire action resolves. This function resets and restarts
+	# the job every time it's called, even when projection_already_in_flight
+	# is true -- report whether that's happening and from what source, so a
+	# repro shows whether the same job is getting kicked off twice.
+	if clean_section == "weapons":
+		EraLog.truth(
+			"ERALIFE_WEAPON_PROJECTION_BEGIN|actor=%d|already_in_flight=%s|source=%s"
+			% [
+				actor_id,
+				str(projection_already_in_flight),
+				source
+			]
+		)
+
 	var actor_key: String = str(
 		actor_id
 	)
@@ -6134,6 +6158,31 @@ func _service_resident_heavy_section_projection_queue() -> void:
 		_arm_resident_heavy_section_projection_service()
 		return
 
+	# DIAGNOSTIC: chasing a weapons-row duplication bug. This is the job's
+	# final row list right before it becomes the new section_surfaces_by_actor
+	# entry. If item_ids repeat here, the duplicate was built inside this
+	# job's own accumulation loop; if this logs exactly one row per item_id
+	# but the panel still shows two, the duplicate is happening downstream of
+	# this engine, not in here.
+	if section_id == "weapons":
+		var row_ids: String = ""
+		for logged_row in rows:
+			if typeof(logged_row) != TYPE_DICTIONARY:
+				continue
+			if row_ids != "":
+				row_ids += ", "
+			row_ids += str((logged_row as Dictionary).get("item_id", "?"))
+		EraLog.truth(
+			"ERALIFE_WEAPON_PROJECTION_COMPLETE|actor=%d|job_key=%s|row_count=%d|item_ids=%s|source=%s"
+			% [
+				actor_id,
+				job_key,
+				rows.size(),
+				row_ids,
+				str(state.get("source", ""))
+			]
+		)
+
 	var actor_key: String = str(
 		actor_id
 	)
@@ -6312,6 +6361,19 @@ func _on_crime_belongings_event(
 			"item_id",
 			-1
 		)
+	)
+
+	# DIAGNOSTIC: chasing a weapons-row duplication bug. Report every belongings
+	# event that reaches this handler for the Weapons category, so a repro
+	# shows how many times this fires (and with what event_type/item_id)
+	# across one weapon-fire sequence, not just that it fired.
+	EraLog.truth(
+		"ERALIFE_WEAPON_BELONGINGS_EVENT|actor=%d|event_type=%s|item_id=%d"
+		% [
+			actor_id,
+			event_type,
+			item_id
+		]
 	)
 
 	if event_type == "item_removed":

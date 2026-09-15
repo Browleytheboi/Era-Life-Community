@@ -288,6 +288,39 @@ func yearly_tick_actor(
 		else {}
 	)
 
+	# DIAGNOSTIC: sentence reads "0 years", time served never advances, and release
+	# never happens. reduce_prison_time() IS called each age-up, so the tick runs.
+	# Report which branch it takes and what the inmate row holds -- an empty row
+	# sends it down the legacy path, which may not touch the modern prison state
+	# the HUD is displaying.
+	EraLog.truth(
+		"ERALIFE_PRISON_TICK|actor=%d|row_found=%s|sentence_years=%d|years_served=%d|years_remaining=%d"
+		% [
+			actor_id,
+			str(
+				not row.is_empty()
+			),
+			int(
+				row.get(
+					"sentence_years",
+					-1
+				)
+			),
+			int(
+				row.get(
+					"years_served",
+					-1
+				)
+			),
+			int(
+				row.get(
+					"years_remaining",
+					-1
+				)
+			)
+		]
+	)
+
 	if row.is_empty():
 		return _legacy_trait_sentence_tick(
 			actor

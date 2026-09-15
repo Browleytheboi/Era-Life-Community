@@ -1559,11 +1559,18 @@ func _register_crime_target_card_presentation(
 		target_id
 	)
 
+	# FIX: casting a freed object throws in Godot 4, and the cast ran BEFORE
+	# the is_instance_valid() guard below -- so the guard never ran. These
+	# card references are freed when the section re-renders. Validate first.
+	var previous_card_raw: Variant = crime_target_card_by_id.get(
+		target_key,
+		null
+	)
+
 	var previous_card: PanelContainer = (
-		crime_target_card_by_id.get(
-			target_key,
-			null
-		) as PanelContainer
+		previous_card_raw as PanelContainer
+		if previous_card_raw != null and is_instance_valid(previous_card_raw)
+		else null
 	)
 
 	if (
@@ -1664,11 +1671,18 @@ func _acknowledge_crime_target_visual_selection(
 		target_id
 	)
 
+	# FIX: casting a freed object throws in Godot 4, and the cast ran BEFORE
+	# the is_instance_valid() guard below -- so the guard never ran. These
+	# card references are freed when the section re-renders. Validate first.
+	var selected_card_raw: Variant = crime_target_card_by_id.get(
+		target_key,
+		null
+	)
+
 	var selected_card: PanelContainer = (
-		crime_target_card_by_id.get(
-			target_key,
-			null
-		) as PanelContainer
+		selected_card_raw as PanelContainer
+		if selected_card_raw != null and is_instance_valid(selected_card_raw)
+		else null
 	)
 
 	if (
@@ -1735,13 +1749,20 @@ func _service_crime_target_visual_dim(
 		crime_target_visual_dim_cursor += 1
 		serviced += 1
 
+		# FIX: casting a freed object throws in Godot 4, and the cast ran BEFORE
+		# the is_instance_valid() guard below -- so the guard never ran. These
+		# card references are freed when the section re-renders. Validate first.
+		var card_control_raw: Variant = crime_target_card_by_id.get(
+			str(
+			target_id
+			),
+			null
+		)
+
 		var card_control: PanelContainer = (
-			crime_target_card_by_id.get(
-				str(
-					target_id
-				),
-				null
-			) as PanelContainer
+			card_control_raw as PanelContainer
+			if card_control_raw != null and is_instance_valid(card_control_raw)
+			else null
 		)
 
 		if (
@@ -1799,13 +1820,20 @@ func _service_crime_target_reticle_pulse_quantum() -> void:
 		crime_target_reticle_pulse_cursor += 1
 		serviced += 1
 
+		# FIX: casting a freed object throws in Godot 4, and the cast ran BEFORE
+		# the is_instance_valid() guard below -- so the guard never ran. These
+		# card references are freed when the section re-renders. Validate first.
+		var card_control_raw: Variant = crime_target_card_by_id.get(
+			str(
+			target_id
+			),
+			null
+		)
+
 		var card_control: PanelContainer = (
-			crime_target_card_by_id.get(
-				str(
-					target_id
-				),
-				null
-			) as PanelContainer
+			card_control_raw as PanelContainer
+			if card_control_raw != null and is_instance_valid(card_control_raw)
+			else null
 		)
 
 		if (
@@ -2688,6 +2716,30 @@ func render_contract(
 				incoming_surface
 			):
 				continue
+
+			# DIAGNOSTIC: neither get_inventory_rows_for_actor() nor _weapon_rows()
+			# is ever reached, yet weapons render duplicated. So the panel is
+			# serving rows from THIS cache, not rebuilding them. Report what is
+			# adopted per section and how many rows it carries -- if the row count
+			# grows across adoptions, the surface itself is accumulating.
+			EraLog.truth(
+				"ERALIFE_CRIME_SECTION_ADOPT|section=%s|incoming_rows=%d|existing_rows=%d"
+				% [
+					section_id,
+					_safe_array(
+						incoming_surface.get(
+							"section_rows",
+							[]
+						)
+					).size(),
+					_safe_array(
+						existing_surface.get(
+							"section_rows",
+							[]
+						)
+					).size()
+				]
+			)
 
 			section_contract_cache [
 				section_id
@@ -3710,6 +3762,31 @@ func _paint_crime_section_surface(
 		or not is_instance_valid(section_surface)
 	):
 		return
+	# DIAGNOSTIC: chasing a weapons-row duplication bug. This is the last stop
+	# before anything becomes a visible card -- whatever row count shows up
+	# here is what gets drawn, regardless of which upstream system produced
+	# it. If this logs twice per repro, or logs row_count 2 even once, that
+	# pins the duplicate to this handoff or earlier; if it logs clean single
+	# rows every time and the screen still shows two, the bug is in the
+	# card-building loop below this point, not in the data reaching it.
+	if section_id == "weapons":
+		var paint_row_ids: String = ""
+		for paint_raw_row in _safe_array(surface.get("section_rows", [])):
+			if typeof(paint_raw_row) != TYPE_DICTIONARY:
+				continue
+			var paint_item: Dictionary = _shallow_dictionary(
+				(paint_raw_row as Dictionary).get("item", paint_raw_row)
+			)
+			if paint_row_ids != "":
+				paint_row_ids += ", "
+			paint_row_ids += str(paint_item.get("id", (paint_raw_row as Dictionary).get("item_id", "?")))
+		EraLog.truth(
+			"ERALIFE_WEAPON_PAINT|row_count=%d|item_ids=%s"
+			% [
+				_safe_array(surface.get("section_rows", [])).size(),
+				paint_row_ids
+			]
+		)
 	_clear_children(
 		section_surface
 	)
@@ -4637,13 +4714,20 @@ func _on_resident_weapon_target_pressed(
 
 
 
+	# FIX: casting a freed object throws in Godot 4, and the cast ran BEFORE
+	# the is_instance_valid() guard below -- so the guard never ran. These
+	# card references are freed when the section re-renders. Validate first.
+	var target_card_raw: Variant = crime_target_card_by_id.get(
+		str(
+		target_id
+		),
+		null
+	)
+
 	var target_card: PanelContainer = (
-		crime_target_card_by_id.get(
-			str(
-				target_id
-			),
-			null
-		) as PanelContainer
+		target_card_raw as PanelContainer
+		if target_card_raw != null and is_instance_valid(target_card_raw)
+		else null
 	)
 
 	if (
@@ -4883,6 +4967,17 @@ func _render_row_into(
 
 	target_root.add_child(
 		row_card
+	)
+
+	# FIX: the live-streamed weapons list (_paint_streamed_crime_section_row)
+	# had no way to tell whether a card for this same row was already resident
+	# in the container, so every publish of the same real item added another
+	# card instead of replacing the existing one. Stamping the identity key
+	# here lets that caller look up and remove any existing card before
+	# adding a new one.
+	row_card.set_meta(
+		"crime_row_identity_key",
+		_crime_row_identity_key(row)
 	)
 
 	var margin:= MarginContainer.new()
@@ -6115,6 +6210,35 @@ func _paint_streamed_crime_section_row(
 			pending_status
 		)
 		pending_status.queue_free()
+
+	# FIX: this function used to add a card for every published row with no
+	# check for whether a card representing the same item was already
+	# resident in the container -- so the same real item, published twice
+	# (e.g. once when acquired, again after a later action re-publishes the
+	# same resident data), ended up with two cards on screen for one item.
+	# Remove any existing card with the same identity before adding the new
+	# one, so a republish updates in place instead of accumulating.
+	var incoming_identity_key: String = _crime_row_identity_key(
+		row_contract
+	)
+
+	if incoming_identity_key != "":
+		for existing_child in resident_surface.get_children():
+			if not is_instance_valid(existing_child):
+				continue
+
+			if str(
+				existing_child.get_meta(
+					"crime_row_identity_key",
+					""
+				)
+			) != incoming_identity_key:
+				continue
+
+			resident_surface.remove_child(
+				existing_child
+			)
+			existing_child.queue_free()
 
 	_render_row_into(
 		resident_surface,

@@ -5,6 +5,13 @@ const CONSCIOUSNESS_VERSION:= 1
 const CONSCIOUSNESS_SCHEMA:= "eralife.consciousness_contract"
 const CONSCIOUSNESS_MEMORY_SCHEMA:= "eralife.consciousness_memory"
 const MAX_MEMORY_INDEX_SIZE:= 250
+# FIX: person.memories had no cap anywhere in the codebase, so it grew for a
+# person's whole life -- and the dedupe check two lines below this constant's
+# use (person.memories.has(clean_text)) is a linear scan, so every remember()
+# call got slower as the array grew. Capping it the same way
+# MAX_MEMORY_INDEX_SIZE already caps consciousness_memory_index keeps both the
+# array size and the scan cost bounded.
+const MAX_PLAIN_MEMORY_SIZE:= 250
 
 var gs
 var consciousness_index: Dictionary = {}
@@ -210,6 +217,8 @@ func remember(person: Person, text: String, context: Dictionary = {}) -> Diction
 
 	if not person.memories.has(clean_text):
 		person.memories.append(clean_text)
+		while person.memories.size() > MAX_PLAIN_MEMORY_SIZE:
+			person.memories.pop_front()
 
 	var impact_report: Dictionary = {}
 	if not narrative_contract.is_empty() or not memory_impact.is_empty():

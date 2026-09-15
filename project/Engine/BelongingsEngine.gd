@@ -52,14 +52,15 @@ func add_item(
 
 	# DIAGNOSTIC: report every Vehicles add with its id, so a category that keeps
 	# growing on each Assets visit names whatever is adding to it.
-	if str(category) == "Vehicles":
+	if str(category) == "Vehicles" or str(category) == "Weapons":
 		EraLog.truth(
-			"ERALIFE_BELONGINGS_ADD|owner=%d|category=%s|item_id=%s|name=%s"
+			"ERALIFE_BELONGINGS_ADD|owner=%d|category=%s|item_id=%s|name=%s|source=%s"
 			% [
 				int(person.id),
 				str(category),
 				str(item.get("id", -1)) if typeof(item) == TYPE_DICTIONARY else "?",
-				str(item.get("display_name", item.get("model", "?"))) if typeof(item) == TYPE_DICTIONARY else "?"
+				str(item.get("name", item.get("display_name", item.get("model", "?")))) if typeof(item) == TYPE_DICTIONARY else "?",
+				str(event_context.get("source", "-")) if typeof(event_context) == TYPE_DICTIONARY else "-"
 			]
 		)
 
@@ -783,6 +784,46 @@ func get_inventory_rows_for_actor(
 	var rows: Array = []
 	var categories: Array = inventory.keys()
 	categories.sort()
+
+	# DIAGNOSTIC: only ONE add_item call is logged for a weapon (item_id=41,
+	# source=weapons_engine.purchase) yet two rows render. So either the stored
+	# array holds the entry twice -- which add_item's id dedupe should prevent --
+	# or the same item appears under two categories, or this builder is called
+	# twice and its output concatenated by the caller. Report what is actually
+	# stored, per category, with ids.
+	for probe_category in categories:
+		var probe_items_raw: Variant = inventory.get(
+			probe_category,
+			[]
+		)
+
+		if typeof(probe_items_raw) != TYPE_ARRAY:
+			continue
+
+		var probe_ids: String = ""
+
+		for probe_raw_item in (probe_items_raw as Array):
+			if typeof(probe_raw_item) != TYPE_DICTIONARY:
+				continue
+
+			if probe_ids != "":
+				probe_ids += ", "
+
+			probe_ids += str(
+				(probe_raw_item as Dictionary).get(
+					"id",
+					-1
+				)
+			)
+
+		EraLog.truth(
+			"ERALIFE_INVENTORY_STORED|category=%s|count=%d|ids=%s"
+			% [
+				str(probe_category),
+				(probe_items_raw as Array).size(),
+				probe_ids
+			]
+		)
 
 	for raw_category in categories:
 		var category: String = str(

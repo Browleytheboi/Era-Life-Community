@@ -4610,6 +4610,25 @@ or visible_runtime_hot
 
 		1:
 			lane_name = "bias_commit"
+
+			# DIAGNOSTIC: ERALIFE_PRISON_TICK never fires, so
+			# PrisonEngine.yearly_tick_actor() is never reached -- which means this
+			# lane is not running. reduce_prison_time() is its only caller, and this
+			# is that call. Note this is the player_phase_contract walker, NOT the
+			# year_and_era_mutation walker; a separate lane machine with its own
+			# cursor and its own opportunities to be abandoned mid-run.
+			EraLog.truth(
+				"ERALIFE_PLAYER_PHASE_LANE|lane=bias_commit|year=%d|crime_engine=%s"
+				% [
+					int(
+						gs.year
+					),
+					str(
+						gs.crime_engine != null
+					)
+				]
+			)
+
 			if gs.scenario_engine != null:
 				gs.scenario_engine.apply_committed_biases_for_year()
 			if gs.crime_engine != null:
@@ -4945,8 +4964,32 @@ func _run_narrative_and_presentation() -> void:
 		"typed_world_feed_done": false,
 		"typed_popups_done": false,
 		"typed_chronicle_done": false,
-		"year_commit_complete_queued": false
+		"year_commit_complete_queued": false,
+		"hud_visibility_refreshed": false
 	}
+
+	# FIX: runtime_hud_visibility_snapshot was only ever rebuilt at birth and at
+	# checkpoint/save resume, never on an ordinary yearly age-up -- so hub icons
+	# that unlock with age (career, school, crime, etc.) never appeared until
+	# something unrelated (opening and closing any hub) incidentally forced a
+	# resync. Rebuild it here once per year, same as every other narrative/
+	# presentation step in this phase, so newly-eligible icons show up the year
+	# they actually become available instead of waiting on an unrelated trigger.
+	if not bool(narrative_progress.get("hud_visibility_refreshed", false)):
+		if gs.has_method("_checkpoint_resume_hud_visibility_snapshot_for_current_actor"):
+			var hud_base_raw: Variant = gs.scenario_state.get("runtime_hud_visibility_snapshot", {})
+			var hud_base: Dictionary = hud_base_raw as Dictionary if typeof(hud_base_raw) == TYPE_DICTIONARY else {}
+			var hud_snapshot: Dictionary = gs._checkpoint_resume_hud_visibility_snapshot_for_current_actor(hud_base)
+
+			hud_snapshot ["reason"] = "age_up_yearly_refresh"
+			hud_snapshot ["updated_at_ms"] = int(Time.get_ticks_msec())
+
+			gs.scenario_state ["runtime_hud_visibility_snapshot"] = hud_snapshot
+			gs.scenario_state ["runtime_hud_visibility_snapshot_reason"] = "age_up_yearly_refresh"
+			gs.scenario_state ["runtime_hud_visibility_snapshot_at_ms"] = hud_snapshot ["updated_at_ms"]
+			gs.scenario_state ["runtime_hud_visibility_snapshot_complete"] = not hud_snapshot.is_empty()
+
+		narrative_progress ["hud_visibility_refreshed"] = true
 
 	var rows_remaining: int = narrative_step_budget
 
@@ -5069,6 +5112,9 @@ func _narrative_and_presentation_complete() -> bool:
 
 	var narrative_progress_raw: Variant = active_year_context.get("narrative_progress", {})
 	var narrative_progress: Dictionary = narrative_progress_raw if typeof(narrative_progress_raw) == TYPE_DICTIONARY else {}
+
+	if not bool(narrative_progress.get("hud_visibility_refreshed", false)):
+		return false
 
 	if not bool(narrative_progress.get("typed_world_feed_done", false)):
 		return false
@@ -7793,6 +7839,33 @@ func run_year_runtime_slice(max_phase_steps: int = 1, max_commit_stages: int = 1
 	var effective_phase_steps: int = clamp(int(max_phase_steps), 1, 1)
 	var effective_commit_stages: int = clamp(int(max_commit_stages), 1, 3)
 
+	# DIAGNOSTIC: "player_phase_contract" is 6th of 8 in the phase order, and this
+	# slice is clamped to ONE phase step per call. ERALIFE_SLICE_PHASE never fires,
+	# so the cursor never gets that far -- which means reduce_prison_time() and
+	# apply_committed_biases_for_year() have never run on the visible age-up path.
+	#
+	# Report the cursor against the order size on every slice call, to establish
+	# whether the phase list is merely slow to advance or is abandoned partway
+	# every year. Those need different fixes.
+	EraLog.truth(
+		"ERALIFE_SLICE_CURSOR|cursor=%d|order_size=%d|phase=%s|year=%d"
+		% [
+			runtime_slice_phase_cursor,
+			runtime_slice_order.size(),
+			str(
+				runtime_slice_order [
+					runtime_slice_phase_cursor
+				]
+			) if (
+				runtime_slice_phase_cursor >= 0
+				and runtime_slice_phase_cursor < runtime_slice_order.size()
+			) else "-",
+			int(
+				gs.year
+			) if gs != null else -1
+		]
+	)
+
 	var loading_raw: Variant = gs.scenario_state.get("loading_runtime", {}) if gs != null and typeof(gs.scenario_state) == TYPE_DICTIONARY else {}
 	var loading: Dictionary = loading_raw if typeof(loading_raw) == TYPE_DICTIONARY else {}
 	var overlay_context_raw: Variant = loading.get("overlay_context", {})
@@ -8044,6 +8117,23 @@ func run_year_runtime_slice(max_phase_steps: int = 1, max_commit_stages: int = 1
 						"current_phase": phase_name
 					}
 			"player_phase_contract":
+				# DIAGNOSTIC: lane 1 of this walker (bias_commit) never runs -- it
+				# holds reduce_prison_time() AND apply_committed_biases_for_year(),
+				# so the prison sentence never ticks and scenario biases are
+				# skipped. The walker IS reachable from here, so the question is
+				# whether the slice's phase cursor ever gets this far before
+				# yielding. Report each time this phase is stepped.
+				EraLog.truth(
+					"ERALIFE_SLICE_PHASE|phase=player_phase_contract|year=%d|cursor=%d|steps_remaining=%d"
+					% [
+						int(
+							gs.year
+						),
+						runtime_slice_phase_cursor,
+						steps_remaining
+					]
+				)
+
 				var player_step: Dictionary = _step_player_phase_contract_walker()
 				var player_accumulated_ms: int = int(runtime_slice_phase_timings.get("player_phase_contract", 0))
 				player_accumulated_ms += int(Time.get_ticks_msec() - phase_started)
