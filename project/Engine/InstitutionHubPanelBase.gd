@@ -2371,6 +2371,7 @@ func _build_section_surface(
 
 func _render_contract_rows_into(root: VBoxContainer, contract: Dictionary) -> void:
 	var groups: Array = _array(contract.get("groups", []))
+	var pending: Array = []
 
 	if not groups.is_empty():
 		for raw_group in groups:
@@ -2382,19 +2383,94 @@ func _render_contract_rows_into(root: VBoxContainer, contract: Dictionary) -> vo
 			if str(group.get("row_kind", "")).strip_edges() == "":
 				group ["row_kind"] = ("relationship_group" if group.has("cards") else "information")
 
-			_render_row_into(root, group)
+			pending.append(group)
+	else:
+		var rows: Array = _array(contract.get("section_rows", contract.get("rows", [])))
 
+		for raw_row in rows:
+			var row: Dictionary = _dict(raw_row)
+
+			if row.is_empty():
+				continue
+
+			pending.append(row)
+
+	_stream_rows_cooperatively(root, pending)
+
+# Builds a section's rows a few at a time across frames instead of all in one
+# synchronous call. Every row-rendering hub in this codebase builds its own
+# section surface in a single unbroken pass with no frame budget, which is
+# fine for a handful of rows but not for a large family's relationship cards
+# on weak hardware -- rebuilding a big section could stall a whole frame, and
+# rebuilding two sections close together could stack those stalls. Rows still
+# stream in this same order, just spread out; the first batch renders
+# immediately so a section never looks empty on open.
+const ROWS_PER_COOPERATIVE_QUANTUM: int = 5
+
+func _stream_rows_cooperatively(root: VBoxContainer, pending_rows: Array) -> void:
+	if root == null or not is_instance_valid(root):
 		return
 
-	var rows: Array = _array(contract.get("section_rows", contract.get("rows", [])))
+	var generation: int = (
+		int(
+			root.get_meta(
+				"row_stream_generation",
+				0
+			)
+		) + 1
+	)
 
-	for raw_row in rows:
-		var row: Dictionary = _dict(raw_row)
+	root.set_meta("row_stream_generation", generation)
+	root.set_meta("row_stream_pending", pending_rows)
+	root.set_meta("row_stream_cursor", 0)
 
-		if row.is_empty():
-			continue
+	_service_row_stream_quantum(root, generation)
 
-		_render_row_into(root, row)
+func _service_row_stream_quantum(root: VBoxContainer, generation: int) -> void:
+	if root == null or not is_instance_valid(root):
+		return
+
+	# A newer call to _stream_rows_cooperatively() on this same root superseded
+	# this one -- stop rather than render stale rows on top of fresh ones.
+	if int(root.get_meta("row_stream_generation", -1)) != generation:
+		return
+
+	var pending: Array = _array(root.get_meta("row_stream_pending", []))
+	var cursor: int = int(root.get_meta("row_stream_cursor", 0))
+	var end_index: int = mini(
+		cursor + ROWS_PER_COOPERATIVE_QUANTUM,
+		pending.size()
+	)
+
+	for i in range(cursor, end_index):
+		_render_row_into(root, _dict(pending[i]))
+
+	root.set_meta("row_stream_cursor", end_index)
+
+	if end_index >= pending.size():
+		root.remove_meta("row_stream_pending")
+		return
+
+	var tree: SceneTree = root.get_tree()
+
+	if tree == null:
+		call_deferred(
+			"_service_row_stream_quantum",
+			root,
+			generation
+		)
+		return
+
+	tree.process_frame.connect(
+		Callable(
+			self,
+			"_service_row_stream_quantum"
+		).bind(
+			root,
+			generation
+		),
+		CONNECT_ONE_SHOT
+	)
 
 
 func _render_row_into(
