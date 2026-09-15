@@ -2426,113 +2426,19 @@ func _bootstrap_chassis_runtime_on_worker(
 		"worker_thread_used": true,
 		"safety_cursor": safety_cursor
 	}
-func _hydrate_checkpoint_engine_graph_on_worker(
-	resident_runtime: GameState,
-	signature: String,
-	checkpoint_path: String
-) -> Dictionary:
-	if resident_runtime == null:
-		return {
-			"success": false,
-			"complete": false,
-			"reason": "checkpoint_engine_graph_runtime_missing",
-			"signature": signature,
-			"worker_thread_used": true,
-		}
-
-	var context: Dictionary = {
-		"signature": signature,
-		"checkpoint_path": checkpoint_path,
-		"source": (
-			"reality_residency_manager."
-			+ "checkpoint_engine_graph_worker"
-		),
-		"max_steps": 1,
-		"frame_budget_ms": 1,
-		"worker_thread_used": true,
-		"runtime_scene_tree_access_allowed": false,
-		"constructor_work_on_renderer_thread": false,
-		"ui_is_renderer_only": true
-	}
-
-	var build_report: Dictionary = {}
-	var safety_cursor: int = 0
-	var safety_limit: int = 4096
-
-	while safety_cursor < safety_limit:
-		build_report = (
-			resident_runtime
-			.prepare_resident_runtime_for_checkpoint_hydration(
-				context
-			)
-		)
-
-		if (
-			resident_runtime.resident_runtime_bootstrap_failed
-			or bool(
-				build_report.get(
-					"failed",
-					false
-				)
-			)
-			or not bool(
-				build_report.get(
-					"success",
-					true
-				)
-			)
-		):
-			return {
-				"success": false,
-				"complete": false,
-				"reason": (
-					"checkpoint_engine_graph_bootstrap_failed"
-				),
-				"signature": signature,
-				"build_report": build_report,
-				"worker_thread_used": true,
-			}
-
-		if bool(
-			build_report.get(
-				"ready",
-				build_report.get(
-					"complete",
-					false
-				)
-			)
-		):
-			return {
-				"success": true,
-				"complete": true,
-				"signature": signature,
-				"build_report": build_report,
-				"worker_thread_used": true,
-				"ready_gate_member": false,
-				"completed_at_ms": int(
-					Time.get_ticks_msec()
-				)
-			}
-
-		safety_cursor += 1
-
-
-
-		OS.delay_msec(
-			4
-		)
-
-	return {
-		"success": false,
-		"complete": false,
-		"reason": (
-			"checkpoint_engine_graph_worker_safety_limit_reached"
-		),
-		"signature": signature,
-		"build_report": build_report,
-		"worker_thread_used": true,
-		"safety_cursor": safety_cursor
-	}
+# REMOVED: this used to be a Thread.new()-run background worker (see the
+# checkpoint_engine_graph_worker spawn site below), looping on
+# GameState.prepare_resident_runtime_for_checkpoint_hydration() with an
+# OS.delay_msec(4) sleep between tries. That function mutates this same
+# GameState's scenario_state and live-reassigns engine references on it while
+# the main thread reads/writes the same object every frame elsewhere in this
+# ~260k-line codebase, with zero locking anywhere. A mutex here would only
+# protect this one file's own touches, not the rest of the codebase's
+# unguarded ones, so the thread was removed instead of patched.
+# prepare_resident_runtime_for_checkpoint_hydration() already tracks its own
+# progress (resident_runtime_bootstrap_cursor) and is safe to call once per
+# service tick from the main thread -- see the cooperative single-step call
+# in the ready/residency_tail_pending branch below, which replaces this.
 func _service_chassis_record(
 	chassis_id: String,
 	_max_steps: int,
@@ -5786,27 +5692,17 @@ func _service_rehydration_record(
 					)
 				).strip_edges()
 
-				var engine_graph_worker:= Thread.new()
-
-				engine_graph_worker_error = (
-					engine_graph_worker.start(
-						Callable(
-							self,
-							"_hydrate_checkpoint_engine_graph_on_worker"
-						).bind(
-							runtime,
-							signature,
-							checkpoint_path
-						),
-						Thread.PRIORITY_LOW
-					)
-				)
-
-				if engine_graph_worker_error == OK:
-					checkpoint_engine_graph_threads [
-						signature
-					] = engine_graph_worker
-					engine_graph_worker_started = true
+				# Cooperative job, not a background thread -- see the removal note above
+				# _service_chassis_record(). checkpoint_engine_graph_threads now holds a
+				# plain Dictionary of inputs instead of a Thread; the tail service below
+				# steps prepare_resident_runtime_for_checkpoint_hydration() once per tick.
+				checkpoint_engine_graph_threads [
+					signature
+				] = {
+					"runtime": runtime,
+					"checkpoint_path": checkpoint_path
+				}
+				engine_graph_worker_started = true
 
 			EraLog.truth(
 				"ERALIFE_CKPT_STAGE|signature=%s|stage=marked_ready" % signature
@@ -7924,7 +7820,7 @@ func _service_ready_checkpoint_tail(
 			)
 		)
 
-		if not (worker_raw is Thread):
+		if not (worker_raw is Dictionary):
 			record [
 				"checkpoint_engine_graph_worker_active"
 			] = false
@@ -7970,11 +7866,153 @@ func _service_ready_checkpoint_tail(
 			)
 			return
 
-		var engine_graph_worker: Thread = (
-			worker_raw as Thread
+		# Cooperative job (see the removal note above _service_chassis_record()): one
+		# real step per service tick instead of a background thread's busy-loop.
+		# prepare_resident_runtime_for_checkpoint_hydration() tracks its own progress
+		# internally, so this resumes exactly where the previous tick left off.
+		var cooperative_job: Dictionary = (
+			worker_raw as Dictionary
+		)
+		var cooperative_runtime: GameState = (
+			cooperative_job.get(
+				"runtime",
+				null
+			) as GameState
 		)
 
-		if engine_graph_worker.is_alive():
+		if cooperative_runtime == null:
+			checkpoint_engine_graph_threads.erase(
+				signature
+			)
+			record [
+				"checkpoint_engine_graph_worker_active"
+			] = false
+			record [
+				"checkpoint_engine_graph_tail_degraded"
+			] = true
+			record [
+				"checkpoint_engine_graph_tail_failure_reason"
+			] = (
+				"checkpoint_engine_graph_cooperative_runtime_missing"
+			)
+			record [
+				"ready_state_preserved"
+			] = true
+			record [
+				"residency_tail_pending"
+			] = false
+
+			resident_records [
+				signature
+			] = record
+
+			_remove_service_key(
+				"resident:%s" % signature
+			)
+			return
+
+		var build_report: Dictionary = (
+			cooperative_runtime
+			.prepare_resident_runtime_for_checkpoint_hydration(
+				{
+					"signature": signature,
+					"checkpoint_path": str(
+						cooperative_job.get(
+							"checkpoint_path",
+							""
+						)
+					),
+					"source": (
+						"reality_residency_manager."
+						+ "checkpoint_engine_graph_cooperative_step"
+					),
+					"max_steps": 1,
+					"frame_budget_ms": 1,
+					"worker_thread_used": false,
+					"runtime_scene_tree_access_allowed": false,
+					"constructor_work_on_renderer_thread": false,
+					"ui_is_renderer_only": true
+				}
+			)
+		)
+
+		var cooperative_attempts: int = (
+			int(
+				record.get(
+					"checkpoint_engine_graph_cooperative_attempts",
+					0
+				)
+			) + 1
+		)
+		record [
+			"checkpoint_engine_graph_cooperative_attempts"
+		] = cooperative_attempts
+
+		var worker_result: Dictionary = {}
+		var worker_finished: bool = false
+
+		if (
+			cooperative_runtime.resident_runtime_bootstrap_failed
+			or bool(
+				build_report.get(
+					"failed",
+					false
+				)
+			)
+			or not bool(
+				build_report.get(
+					"success",
+					true
+				)
+			)
+		):
+			worker_result = {
+				"success": false,
+				"complete": false,
+				"reason": (
+					"checkpoint_engine_graph_bootstrap_failed"
+				),
+				"signature": signature,
+				"build_report": build_report,
+				"worker_thread_used": false,
+			}
+			worker_finished = true
+		elif bool(
+			build_report.get(
+				"ready",
+				build_report.get(
+					"complete",
+					false
+				)
+			)
+		):
+			worker_result = {
+				"success": true,
+				"complete": true,
+				"signature": signature,
+				"build_report": build_report,
+				"worker_thread_used": false,
+				"ready_gate_member": false,
+				"completed_at_ms": int(
+					Time.get_ticks_msec()
+				)
+			}
+			worker_finished = true
+		elif cooperative_attempts >= 4096:
+			worker_result = {
+				"success": false,
+				"complete": false,
+				"reason": (
+					"checkpoint_engine_graph_worker_safety_limit_reached"
+				),
+				"signature": signature,
+				"build_report": build_report,
+				"worker_thread_used": false,
+				"safety_cursor": cooperative_attempts
+			}
+			worker_finished = true
+
+		if not worker_finished:
 			record [
 				"checkpoint_engine_graph_worker_active"
 			] = true
@@ -7998,20 +8036,8 @@ func _service_ready_checkpoint_tail(
 			] = record
 			return
 
-		var worker_result_raw: Variant = (
-			engine_graph_worker.wait_to_finish()
-		)
-
 		checkpoint_engine_graph_threads.erase(
 			signature
-		)
-
-		var worker_result: Dictionary = (
-			worker_result_raw as Dictionary
-			if typeof(
-				worker_result_raw
-			) == TYPE_DICTIONARY
-			else {}
 		)
 
 		record [

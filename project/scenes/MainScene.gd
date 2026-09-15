@@ -71659,6 +71659,33 @@ func _toggle_bending_hud() -> void:
 	_begin_runtime_interaction_quiet_window("toggle_bending_hud", 80 if opening else 60)
 
 	if opening:
+		# DIAGNOSTIC: correlate hub opens against a still-running age-up projection
+		# pump. The age-up lock only gates the age-up button itself, not navigation
+		# into other hubs, so this reports whether the pump was still mid-flight
+		# whenever Bending Hub opened.
+		EraLog.truth(
+			"ERALIFE_BENDING_HUB_OPEN|age_up_lock_active=%s|age_up_lock_frame=%d|current_frame=%d"
+			% [
+				str(
+					bool(
+						get_meta(
+							"age_up_transition_lock",
+							false
+						)
+					)
+				),
+				int(
+					get_meta(
+						"age_up_transition_lock_frame",
+						-1
+					)
+				),
+				int(
+					Engine.get_process_frames()
+				)
+			]
+		)
+
 		_set_runtime_floating_hud_forced_open("bending", true)
 		_ensure_bending_hud()
 
@@ -185454,6 +185481,50 @@ or (age_up_loading_overlay != null and is_instance_valid(age_up_loading_overlay)
 
 
 func _on_button_pressed() -> void:
+	# DIAGNOSTIC: two known callers feed this function (the main nav bar's age-up
+	# icon and the separately-built "Age Up" button in the afterlife overlay).
+	# The lock below already proved this handler can fire twice for one physical
+	# press; its own same-frame guard only catches a double-fire that lands on
+	# the same frame. Report every real entry, unconditionally, before any early
+	# return, so two entries a few frames apart (the case the guard misses, and
+	# the one that would commit two age-ups for one press) shows up directly.
+	var age_up_button_entry_count: int = int(
+		get_meta(
+			"age_up_button_entry_count",
+			0
+		)
+	) + 1
+	set_meta(
+		"age_up_button_entry_count",
+		age_up_button_entry_count
+	)
+
+	EraLog.truth(
+		"ERALIFE_AGE_UP_BUTTON_ENTRY|entry_count=%d|frame=%d|from_nav=%s|lock_active=%s"
+		% [
+			age_up_button_entry_count,
+			int(
+				Engine.get_process_frames()
+			),
+			str(
+				bool(
+					get_meta(
+						"age_up_nav_button_pressed_from_unified_nav_contract",
+						false
+					)
+				)
+			),
+			str(
+				bool(
+					get_meta(
+						"age_up_transition_lock",
+						false
+					)
+				)
+			)
+		]
+	)
+
 	if (
 		gs == null
 		or gs.player == null

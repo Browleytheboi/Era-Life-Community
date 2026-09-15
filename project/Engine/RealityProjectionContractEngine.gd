@@ -1447,6 +1447,43 @@ func begin_resident_projection(
 				signature
 			)
 
+		# DIAGNOSTIC: this is the fall-through the force_rebuild-only guard above
+		# does not cover -- a non-force caller with mismatched actor/interactive
+		# flags erases in-flight work unconditionally. Report every time that
+		# happens while the existing work is still incomplete, so a stall can be
+		# traced back to whichever caller silently destroyed it.
+		var existing_incomplete: bool = not bool(
+			existing_work.get(
+				"complete",
+				false
+			)
+		)
+
+		if existing_incomplete:
+			EraLog.truth(
+				"ERALIFE_PROJECTION_REBUILD_SILENT_ERASE|signature=%s|existing_actor_id=%d|existing_interactive_only=%s|existing_cursor=%d|idle_ms=%d|new_source=%s|new_force_rebuild=%s|new_interactive_only=%s"
+				% [
+					signature,
+					existing_actor_id,
+					str(existing_interactive_only),
+					int(
+						existing_work.get(
+							"cursor",
+							-1
+						)
+					),
+					in_flight_idle_ms,
+					str(
+						context.get(
+							"source",
+							"-"
+						)
+					),
+					str(force_rebuild),
+					str(interactive_surfaces_only)
+				]
+			)
+
 		projection_work_by_signature.erase(
 			signature
 		)
