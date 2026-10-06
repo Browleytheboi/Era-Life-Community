@@ -3490,7 +3490,7 @@ func _run_projection_step(
 		)
 	):
 		EraLog.truth(
-			"ERALIFE_PROJECTION_STEP|signature=%s|step=%s|actor_id=%d|empty=%s|pending=%s|groups=%d|sections=%d|progress=%s|final_emitted=%s|progressive_emitted=%s"
+			"ERALIFE_PROJECTION_STEP|signature=%s|step=%s|actor_id=%d|empty=%s|pending=%s|groups=%d|sections=%d|active_section=%s|has_incarceration_lens=%s|progress=%s|final_emitted=%s|progressive_emitted=%s"
 			% [
 				str(
 					work.get(
@@ -3528,6 +3528,17 @@ func _run_projection_step(
 						{}
 					)
 				).size(),
+				str(
+					surface_contract.get(
+						"active_section_id",
+						"-"
+					)
+				),
+				str(
+					surface_contract.has(
+						"incarceration_lens"
+					)
+				),
 				str(
 					surface_contract.get(
 						"projection_progress",
@@ -3984,6 +3995,23 @@ func _mods_surface(
 	runtime,
 	actor
 ) -> Dictionary:
+	# DIAGNOSTIC: mods still reports pending=true after removing the
+	# authoritative_projection gate. Report exactly which branch this takes --
+	# engine missing entirely, vs. engine present but returning something this
+	# function still rejects.
+	EraLog.truth(
+		"ERALIFE_MODS_SURFACE_ENTRY|runtime_null=%s|engine_null=%s|has_method=%s"
+		% [
+			str(runtime == null),
+			str(runtime == null or runtime.mod_menu_contract_engine == null),
+			str(
+				runtime != null
+				and runtime.mod_menu_contract_engine != null
+				and runtime.mod_menu_contract_engine.has_method("emit_menu_contract")
+			)
+		]
+	)
+
 	if (
 		runtime != null
 		and runtime.mod_menu_contract_engine != null
@@ -4012,15 +4040,29 @@ func _mods_surface(
 			)
 		)
 
-		if (
-			not contract.is_empty()
-			and bool(
-				contract.get(
-					"authoritative_projection",
-					true
-				)
-			)
-		):
+		EraLog.truth(
+			"ERALIFE_MODS_SURFACE_CONTRACT|empty=%s|authoritative_projection=%s|keys=%s"
+			% [
+				str(contract.is_empty()),
+				str(contract.get("authoritative_projection", "MISSING")),
+				str(contract.keys())
+			]
+		)
+
+		# FIX: this required authoritative_projection=true to accept the contract,
+		# but ModHubContractEngine.emit_mod_hub_contract() falls back to
+		# emit_observable_contract() (authoritative_projection=false, a genuine and
+		# apparently permanent state -- nothing ever resolves _law()/mod_contract_engine
+		# into the "authoritative" condition) whenever its own law engine reference is
+		# unavailable. Rejecting that non-empty, renderable contract routed to
+		# _surface_fallback() instead, whose projection_pending=true is meant as a
+		# transient "still loading" placeholder -- but with nothing to ever resolve it,
+		# "mods" gets stuck pending forever. That single stuck step then blocks every
+		# process that waits for the whole surface deck to finish (the resume rebuild,
+		# and the live age-up pump, which timed out at its 600-pass cap because of
+		# exactly this). A non-empty contract is renderable regardless of whether the
+		# law engine has fully synced -- accept it.
+		if not contract.is_empty():
 			contract [
 				"active_section"
 			] = "bundles"
@@ -4681,6 +4723,20 @@ func _arm_resident_relationship_section_refresh_service() -> void:
 
 	var tree:= Engine.get_main_loop() as SceneTree
 
+	# DIAGNOSTIC: pins whether the refresh pump actually arms. A null tree here
+	# would mean this engine instance is being called from outside the live
+	# scene tree (e.g. a stale/detached GameState), which would explain queued
+	# refresh jobs that report success=true but never produce
+	# ERALIFE_SECTION_REFRESH_JOB.
+	EraLog.truth(
+		"ERALIFE_RELATIONSHIP_REFRESH_ARM|order_size=%d|tree_null=%s|gs_id=%d"
+		% [
+			order.size(),
+			str(tree == null),
+			int(gs.get_instance_id()) if gs != null else -1
+		]
+	)
+
 	if tree == null:
 		set_meta(
 			"resident_relationship_section_refresh_service_active",
@@ -4784,7 +4840,16 @@ func _service_resident_relationship_section_refresh_queue() -> void:
 		jobs
 	)
 
+	# DIAGNOSTIC: pins exactly which early-return path this pump takes every
+	# cycle. ERALIFE_SECTION_REFRESH_JOB never firing in live play despite
+	# ERALIFE_RELATIONSHIP_REFRESH_ARM confirming the pump arms correctly means
+	# one of the two bail-outs below is being hit every single time -- this
+	# logs which one and why, instead of continuing to guess.
 	if typeof(job_raw) != TYPE_DICTIONARY:
+		EraLog.truth(
+			"ERALIFE_SECTION_REFRESH_BAIL|reason=job_not_dict|request_key=%s|job_raw_type=%d"
+			% [request_key, typeof(job_raw)]
+		)
 		_arm_resident_relationship_section_refresh_service()
 		return
 
@@ -4813,6 +4878,16 @@ func _service_resident_relationship_section_refresh_queue() -> void:
 		actor == null
 		or section_id == ""
 	):
+		EraLog.truth(
+			"ERALIFE_SECTION_REFRESH_BAIL|reason=actor_or_section_missing|request_key=%s|actor_id=%d|section_id=%s|gs_player_null=%s|gs_player_id=%d"
+			% [
+				request_key,
+				actor_id,
+				section_id,
+				str(gs == null or gs.player == null),
+				int(gs.player.id) if gs != null and gs.player != null else -1
+			]
+		)
 		_arm_resident_relationship_section_refresh_service()
 		return
 

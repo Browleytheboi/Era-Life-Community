@@ -138,6 +138,21 @@ func activate_popup_contract(contract: Dictionary) -> Dictionary:
 	active_popup_contracts [contract_id] = normalized
 	_commit_state()
 
+	# DIAGNOSTIC: this is the true universal choke point -- every popup
+	# contract, however it got built (via ScenarioPopupContractEngine's
+	# emit_popup_contract() wrapper, or direct calls like
+	# RelationshipActivitiesEngine.gd's), ends up here. Catches sources the
+	# emit_popup_contract() probe alone would miss.
+	EraLog.truth(
+		"ERALIFE_POPUP_CONTRACT_ACTIVATED|contract_id=%s|category=%s|target_id=%d|active_count=%d"
+		% [
+			contract_id,
+			str(normalized.get("category", "general")),
+			int(normalized.get("target_id", normalized.get("target", -1))),
+			active_popup_contracts.size()
+		]
+	)
+
 	last_report = {
 		"success": true,
 		"mode": "popup_contract_activated",
@@ -1612,7 +1627,7 @@ func _apply_loan_acceptance(contract: Dictionary, _option: Dictionary) -> Dictio
 		"success": true,
 		"text": "I loaned $%d." % amount,
 		"popup_title": "Loan Created",
-		"popup_text": "You gave them $%d. A repayment contract now exists in reality." % amount,
+		"popup_text": "You gave them $%d. They now owe you a repayment." % amount,
 		"popup_footer": "Tap anywhere to continue.",
 		"created_contract_id": str(loan_contract ["id"])
 	}

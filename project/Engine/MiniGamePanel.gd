@@ -7191,7 +7191,7 @@ func _on_section_pressed(
 	reveal_pending_observation(
 		clean_section,
 		(
-			"%s is resident. Current truth is publishing."
+			"Loading %s..."
 			% clean_section.replace(
 				"_",
 				" "

@@ -18,6 +18,7 @@ var jail_facility_contract_by_id: Dictionary = {}
 var resident_jail_reality_by_actor: Dictionary = {}
 var jail_facility_members_by_id: Dictionary = {}
 var jail_cellmate_by_actor: Dictionary = {}
+var jail_guard_ids_by_facility: Dictionary = {}
 
 func _init(_gs = null):
 	gs = _gs
@@ -434,10 +435,572 @@ func _register_jail_resident(
 		facility_id
 	] = member_ids
 
+	# FIX: mirrors PrisonEngine's _register_prison_resident() fix -- this
+	# function only ever appended the player's own actor_id to a facility's
+	# member list, and the GUARDS tab's cards were hardcoded to []. Nothing
+	# in JailEngine ever generated other detainees or guards the way
+	# PrisonEngine's registries do. Must run BEFORE _assign_jail_cellmate()
+	# so a cellmate can actually be found among the newly-generated
+	# population instead of coming up empty every time.
+	_ensure_jail_population_registry_for_facility(
+		facility_id,
+		facility_contract
+	)
+
 	_assign_jail_cellmate(
 		actor_id,
 		facility_id
 	)
+
+	_ensure_jail_guard_registry_for_facility(
+		facility_id,
+		facility_contract
+	)
+
+
+func _ensure_jail_population_registry_for_facility(
+		facility_id: String,
+		facility_contract: Dictionary
+) -> void:
+	var clean_facility_id: String = str(
+		facility_id
+	).strip_edges()
+
+	if (
+		clean_facility_id == ""
+		or gs == null
+	):
+		return
+
+	var member_ids: Array = _safe_array(
+		jail_facility_members_by_id.get(
+			clean_facility_id,
+			[]
+		)
+	).duplicate(false)
+
+	var existing_other_detainees: int = 0
+
+	for raw_member_id in member_ids:
+		var member_id: int = int(
+			raw_member_id
+		)
+		var member_booking: Dictionary = _safe_dictionary(
+			holding_cells.get(
+				str(
+					member_id
+				),
+				{}
+			)
+		)
+
+		if (
+			not member_booking.is_empty()
+			and str(
+				member_booking.get(
+					"facility_id",
+					""
+				)
+			).strip_edges() == clean_facility_id
+		):
+			existing_other_detainees += 1
+
+	var security_level: String = str(
+		facility_contract.get(
+			"security_level",
+			"Low"
+		)
+	).strip_edges()
+
+	var target_count: int = 4
+
+	match security_level:
+		"High":
+			target_count = 6
+
+		"Maximum":
+			target_count = 8
+
+		_:
+			target_count = 4
+
+	target_count = clampi(
+		target_count,
+		3,
+		8
+	)
+
+	var ordinal: int = existing_other_detainees
+
+	while existing_other_detainees < target_count:
+		var detainee: Person = _create_jail_detainee_person(
+			clean_facility_id,
+			facility_contract,
+			ordinal
+		)
+
+		if detainee == null:
+			break
+
+		if int(detainee.id) not in member_ids:
+			member_ids.append(
+				int(
+					detainee.id
+				)
+			)
+
+		existing_other_detainees += 1
+		ordinal += 1
+
+	member_ids.sort()
+
+	jail_facility_members_by_id [
+		clean_facility_id
+	] = member_ids
+
+
+func _create_jail_detainee_person(
+		facility_id: String,
+		facility_contract: Dictionary,
+		ordinal: int
+) -> Person:
+	if (
+		gs == null
+		or gs.npc_factory == null
+		or not gs.npc_factory.has_method(
+			"create_random_npc"
+		)
+	):
+		return null
+
+	var detainee: Person = gs.npc_factory.create_random_npc(
+		false
+	)
+
+	if detainee == null:
+		return null
+
+	detainee.age = 18 + int(
+		abs(
+			hash(
+				"%s|detainee|%d"
+				% [
+					facility_id,
+					ordinal
+				]
+			)
+		) % 45
+	)
+	detainee.alive = true
+	detainee.health = maxf(
+		float(
+			detainee.health
+		),
+		40.0
+	)
+	detainee.mental_health = maxf(
+		float(
+			detainee.mental_health
+		),
+		30.0
+	)
+
+	if typeof(detainee.traits) != TYPE_ARRAY:
+		detainee.traits = []
+
+	if "Incarcerated" not in detainee.traits:
+		detainee.traits.append(
+			"Incarcerated"
+		)
+
+	var facility_trait: String = (
+		"FacilityResident:%s"
+		% facility_id
+	)
+
+	if facility_trait not in detainee.traits:
+		detainee.traits.append(
+			facility_trait
+		)
+
+	if typeof(detainee.memories) != TYPE_ARRAY:
+		detainee.memories = []
+
+	detainee.memories.append(
+		(
+			"I was booked and held at %s."
+			% str(
+				facility_contract.get(
+					"facility_label",
+					"a jail"
+				)
+			)
+		)
+	)
+
+	if gs.has_method(
+		"register_npc"
+	):
+		gs.register_npc(
+			detainee
+		)
+	elif (
+		"npcs" in gs
+		and typeof(
+			gs.npcs
+		) == TYPE_ARRAY
+	):
+		gs.npcs.append(
+			detainee
+		)
+
+	# Generated detainees need a minimal booking row in holding_cells too --
+	# _jail_population_cards() looks each member up there (not in a separate
+	# records table the way PrisonEngine uses inmate_records) and skips
+	# anyone without one.
+	var sentence_years: int = int(
+		abs(
+			hash(
+				"%s|sentence|%d"
+				% [
+					facility_id,
+					ordinal
+				]
+			)
+		) % 3
+	)
+
+	holding_cells [
+		str(
+			detainee.id
+		)
+	] = {
+		"schema": "eralife.jail_booking",
+		"version": CONTRACT_VERSION,
+		"booking_id": "booking_npc_%d_%s" % [int(detainee.id), facility_id],
+		"case_id": "npc_generated:%s" % facility_id,
+		"accused_id": int(
+			detainee.id
+		),
+		"status": (
+			"sentenced"
+			if sentence_years > 0
+			else "booked"
+		),
+		"incarceration_kind": "jail",
+		"facility_id": facility_id,
+		"holding_reason": "holding",
+		"bail_allowed": false,
+		"bail_amount": 0,
+		"sentence_type": "jail_holding",
+		"sentence_years": sentence_years,
+		"facility_type": str(
+			facility_contract.get(
+				"facility_type",
+				"Country Jail"
+			)
+		),
+		"facility_label": str(
+			facility_contract.get(
+				"facility_label",
+				"Country Jail"
+			)
+		),
+		"security_level": str(
+			facility_contract.get(
+				"security_level",
+				"Low"
+			)
+		),
+		"npc_generated": true,
+		"created_at_ms": int(
+			Time.get_ticks_msec()
+		)
+	}
+
+	return detainee
+
+
+func _ensure_jail_guard_registry_for_facility(
+		facility_id: String,
+		facility_contract: Dictionary
+) -> void:
+	var clean_facility_id: String = str(
+		facility_id
+	).strip_edges()
+
+	if (
+		clean_facility_id == ""
+		or gs == null
+	):
+		return
+
+	var guard_ids: Array = _safe_array(
+		jail_guard_ids_by_facility.get(
+			clean_facility_id,
+			[]
+		)
+	).duplicate(false)
+	var normalized_guard_ids: Array = []
+
+	for raw_guard_id in guard_ids:
+		var guard_id: int = int(
+			raw_guard_id
+		)
+
+		if (
+			guard_id > 0
+			and guard_id not in normalized_guard_ids
+		):
+			normalized_guard_ids.append(
+				guard_id
+			)
+
+	var security_level: String = str(
+		facility_contract.get(
+			"security_level",
+			"Low"
+		)
+	).strip_edges()
+
+	var target_count: int = 3
+
+	match security_level:
+		"High":
+			target_count = 4
+
+		"Maximum":
+			target_count = 5
+
+		_:
+			target_count = 3
+
+	target_count = clampi(
+		target_count,
+		2,
+		5
+	)
+
+	while normalized_guard_ids.size() < target_count:
+		var ordinal: int = normalized_guard_ids.size()
+		var guard: Person = _create_jail_guard_person(
+			clean_facility_id,
+			facility_contract,
+			ordinal
+		)
+
+		if guard == null:
+			break
+
+		normalized_guard_ids.append(
+			int(
+				guard.id
+			)
+		)
+
+	jail_guard_ids_by_facility [
+		clean_facility_id
+	] = normalized_guard_ids
+
+
+func _jail_guard_role_for_era(
+		era_name: String
+) -> String:
+	match era_name:
+		"Ancient Era":
+			return "Dungeon Warden"
+
+		"Medieval Era":
+			return "Gaoler"
+
+		"Industrial Era":
+			return "Jailer"
+
+		"Future Era":
+			return "AI-Augmented Detention Officer"
+
+		_:
+			return "Jail Guard"
+
+
+func _create_jail_guard_person(
+		facility_id: String,
+		facility_contract: Dictionary,
+		ordinal: int
+) -> Person:
+	if (
+		gs == null
+		or gs.npc_factory == null
+		or not gs.npc_factory.has_method(
+			"create_random_npc"
+		)
+	):
+		return null
+
+	var guard: Person = gs.npc_factory.create_random_npc(
+		false
+	)
+
+	if guard == null:
+		return null
+
+	var era_name: String = str(
+		facility_contract.get(
+			"era",
+			_current_era_name()
+		)
+	).strip_edges()
+	var role: String = _jail_guard_role_for_era(
+		era_name
+	)
+
+	guard.age = 24 + int(
+		abs(
+			hash(
+				"%s|jail_guard|%d"
+				% [
+					facility_id,
+					ordinal
+				]
+			)
+		) % 35
+	)
+	guard.job = role
+	guard.alive = true
+	guard.health = maxf(
+		float(
+			guard.health
+		),
+		65.0
+	)
+	guard.mental_health = maxf(
+		float(
+			guard.mental_health
+		),
+		55.0
+	)
+
+	if typeof(guard.traits) != TYPE_ARRAY:
+		guard.traits = []
+
+	if "JailGuard" not in guard.traits:
+		guard.traits.append(
+			"JailGuard"
+		)
+
+	if gs.has_method(
+		"register_npc"
+	):
+		gs.register_npc(
+			guard
+		)
+	elif (
+		"npcs" in gs
+		and typeof(
+			gs.npcs
+		) == TYPE_ARRAY
+	):
+		gs.npcs.append(
+			guard
+		)
+
+	return guard
+
+
+func _jail_guard_cards(
+		booking: Dictionary,
+		actor_id: int = -1
+) -> Array:
+	var facility_id: String = str(
+		booking.get(
+			"facility_id",
+			""
+		)
+	).strip_edges()
+
+	if facility_id == "":
+		return []
+
+	var guard_ids: Array = _safe_array(
+		jail_guard_ids_by_facility.get(
+			facility_id,
+			[]
+		)
+	)
+	var out: Array = []
+
+	for raw_guard_id in guard_ids:
+		var guard_id: int = int(
+			raw_guard_id
+		)
+
+		if guard_id <= 0:
+			continue
+
+		var guard = _actor_by_id(
+			guard_id
+		)
+
+		if (
+			guard == null
+			or not bool(
+				guard.alive
+			)
+		):
+			continue
+
+		var guard_name: String = (
+			"%s %s"
+			% [
+				str(
+					guard.first_name
+				),
+				str(
+					guard.last_name
+				)
+			]
+		).strip_edges()
+
+		if guard_name == "":
+			guard_name = "Guard %d" % guard_id
+
+		out.append({
+			"kind": "jail_guard_person_card",
+			"card_kind": "person",
+			"target_id": guard_id,
+			"person_id": guard_id,
+			"label": guard_name,
+			"name": guard_name,
+			"target_name": guard_name,
+			"profile_contract": _incarceration_profile_contract(
+				actor_id,
+				guard,
+				"Guard"
+			),
+			"role": str(
+				guard.job
+			),
+			"relationship_label": "Guard",
+			"subtitle": (
+				"%s • %s"
+				% [
+					str(
+						guard.job
+					),
+					str(
+						booking.get(
+							"facility_label",
+							"Jail"
+						)
+					)
+				]
+			),
+			"facility_id": facility_id,
+			"can_open_profile": true,
+			"ui_is_renderer_only": true
+		})
+
+	return out
 
 
 func _unregister_jail_resident(
@@ -784,6 +1347,17 @@ func _rebuild_resident_jail_indexes_from_canonical_records() -> void:
 			facility_contract
 		)
 
+		# FIX: same class of bug as PrisonEngine.gd's equivalent rebuild --
+		# this restores the engine's own bookkeeping on load but never
+		# re-stamped the actual Person object as held. current_context/
+		# incarceration_state are runtime fields that need re-applying every
+		# time, not just at booking. Without this, a reload silently drops
+		# the actor back to "free" while the booking record is still intact.
+		_apply_jail_context_to_actor(
+			actor_id,
+			booking
+		)
+
 	for raw_facility_id in jail_facility_members_by_id.keys():
 		_publish_jail_facility_residency(
 			str(
@@ -1119,6 +1693,21 @@ func _jail_population_cards(
 			"person_id": detainee_id,
 			"label": person_name,
 			"name": person_name,
+			# FIX: mirrors PrisonEngine's _prison_population_cards() fix --
+			# _build_person_card() renders its title from "target_name"
+			# (falling back to "full_name"/"display_line"/etc, never "label"
+			# or "name"), so without this key every card would render the
+			# generic "Person" placeholder instead of the real name.
+			"target_name": person_name,
+			"profile_contract": _incarceration_profile_contract(
+				actor_id,
+				person,
+				(
+					"Cellmate"
+					if is_cellmate
+					else "Detainee"
+				)
+			),
 			"role": (
 				"Cellmate"
 				if is_cellmate
@@ -1495,6 +2084,87 @@ func _jail_sentence_surface_contract(
 		actor_id: int,
 		booking: Dictionary
 ) -> Dictionary:
+	# FIX: the sentence panel only ever showed Case/Status/Bail -- the actual
+	# sentence length was already being computed at booking time (see
+	# _build_jail_incarceration_context()) and stored on
+	# booking.incarceration_context.sentence_years/years_remaining, it just
+	# was never surfaced here. Pull it back out and show it.
+	var incarceration_context: Dictionary = _safe_dictionary(
+		booking.get(
+			"incarceration_context",
+			{}
+		)
+	)
+	var sentence_years: int = int(
+		incarceration_context.get(
+			"sentence_years",
+			booking.get(
+				"sentence_years",
+				0
+			)
+		)
+	)
+	var years_remaining: int = int(
+		incarceration_context.get(
+			"years_remaining",
+			sentence_years
+		)
+	)
+	var body_lines: Array = [
+		(
+			"Case: %s"
+			% str(
+				booking.get(
+					"case_id",
+					"Unknown"
+				)
+			)
+		),
+		(
+			"Status: %s"
+			% str(
+				booking.get(
+					"status",
+					"booked"
+				)
+			).capitalize()
+		),
+		(
+			"Sentence: %s"
+			% (
+				"%d year%s" % [
+					sentence_years,
+					"" if sentence_years == 1 else "s"
+				]
+				if sentence_years > 0
+				else "No fixed term (awaiting disposition)"
+			)
+		)
+	]
+
+	if sentence_years > 0:
+		body_lines.append(
+			"Time Remaining: %d year%s"
+			% [
+				years_remaining,
+				"" if years_remaining == 1 else "s"
+			]
+		)
+
+	body_lines.append(
+		"Bail: %s"
+		% (
+			"Available"
+			if bool(
+				booking.get(
+					"bail_allowed",
+					false
+				)
+			)
+			else "Unavailable"
+		)
+	)
+
 	return {
 		"schema": "eralife.incarceration_sentence_surface",
 		"version": CONTRACT_VERSION,
@@ -1506,39 +2176,7 @@ func _jail_sentence_surface_contract(
 				"Jail"
 			)
 		),
-		"body_lines": [
-			(
-				"Case: %s"
-				% str(
-					booking.get(
-						"case_id",
-						"Unknown"
-					)
-				)
-			),
-			(
-				"Status: %s"
-				% str(
-					booking.get(
-						"status",
-						"booked"
-					)
-				).capitalize()
-			),
-			(
-				"Bail: %s"
-				% (
-					"Available"
-					if bool(
-						booking.get(
-							"bail_allowed",
-							false
-						)
-					)
-					else "Unavailable"
-				)
-			)
-		],
+		"body_lines": body_lines,
 		"truth_state": "hot",
 		"projection_complete": true,
 		"ui_is_renderer_only": true
@@ -1552,6 +2190,16 @@ func _jail_main_surface_contracts(
 ) -> Dictionary:
 	var cellmate_cards: Array = []
 	var detainee_cards: Array = []
+	# FIX: this was hardcoded to [] below regardless of who was actually on
+	# shift -- mirrors PrisonEngine's _prison_guard_cards(), now that
+	# _ensure_jail_guard_registry_for_facility() actually generates guards.
+	var guard_cards: Array = _jail_guard_cards(
+		booking,
+		actor_id
+	)
+	var actor = _actor_by_id(
+		actor_id
+	)
 
 	for raw_card in population_cards:
 		if typeof(raw_card) != TYPE_DICTIONARY:
@@ -1664,7 +2312,7 @@ func _jail_main_surface_contracts(
 				{
 					"row_kind": "people_group",
 					"title": "GUARDS",
-					"cards": [],
+					"cards": guard_cards,
 					"empty_text": "No jail guard-person contracts are resident yet.",
 					"columns": 3
 				}
@@ -1734,6 +2382,35 @@ func _jail_main_surface_contracts(
 			)
 		),
 		"active_section": "all",
+		# FIX: mirrors PrisonEngine's YARD-panel fix -- ActivitiesHubPanel
+		# reads identity.get("age", 0)/identity.get("year", 0) straight off
+		# this dict, and jail's activities contract never had one at all,
+		# so the CELL BLOCK panel would always show "AGE 0 / YEAR 0".
+		"identity_overview": {
+			"actor_id": actor_id,
+			"age": (
+				int(
+					actor.age
+				)
+				if actor != null
+				else 0
+			),
+			"year": (
+				int(
+					gs.year
+				)
+				if gs != null
+				else 0
+			),
+			"era_name": _current_era_name(),
+			"location": str(
+				booking.get(
+					"facility_label",
+					"Jail"
+				)
+			),
+			"incarcerated": true
+		},
 		"section_tabs": [
 			{
 				"id": "all",
@@ -1794,6 +2471,33 @@ func _jail_main_surface_contracts(
 		],
 		"identity_overview": {
 			"actor_id": actor_id,
+			# FIX: CareerHubPanel._render_identity_overview() reads
+			# resolved.get("age", 0) directly off whatever dict is passed
+			# here -- this dict never had an "age" key at all (only
+			# actor_id/role/context), so every jail career panel showed
+			# "AGE: 0" no matter how old the player actually was.
+			"name": (
+				(
+					"%s %s"
+					% [
+						str(
+							actor.first_name
+						),
+						str(
+							actor.last_name
+						)
+					]
+				).strip_edges()
+				if actor != null
+				else ""
+			),
+			"age": (
+				int(
+					actor.age
+				)
+				if actor != null
+				else 0
+			),
 			"role": "Detainee",
 			"context": str(
 				booking.get(
@@ -2426,6 +3130,41 @@ func _security_level_from_severity(severity: float, years: int = 0) -> String:
 	if severity >= 0.32 or years >= 3:
 		return "Medium"
 	return "Low"
+
+
+func _incarceration_profile_contract(
+		actor_id: int,
+		target,
+		relationship_label: String
+) -> Dictionary:
+	# FIX: mirrors PrisonEngine's fix -- "Open full relationship profile" on
+	# a detainee/guard card always failed with "The resident relationship
+	# profile projection is not hot." because MainScene opens a card's
+	# profile straight from a "profile_contract" key baked into the card
+	# itself (see RelationshipsHubContractEngine's cards, which all carry
+	# one); our jail population/guard cards never had one.
+	if (
+		gs == null
+		or gs.relationships_hub_contract_engine == null
+		or target == null
+	):
+		return {}
+
+	var actor = _actor_by_id(
+		actor_id
+	)
+
+	if actor == null:
+		return {}
+
+	return gs.relationships_hub_contract_engine.emit_profile_contract(
+		actor,
+		target,
+		{
+			"relationship_role": relationship_label,
+			"projection_read_only": true
+		}
+	)
 
 
 func _actor_by_id(actor_id: int):

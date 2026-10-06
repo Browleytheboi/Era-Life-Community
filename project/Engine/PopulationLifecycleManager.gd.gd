@@ -7,6 +7,18 @@ const MAX_DORMANT_KEEP:= 12000
 const DORMANT_TO_SHARD_BATCH:= 1000
 const SHARD_SAMPLE_REBUILD_CHANCE:= 25
 
+# FIX: the world's entire ambient population used to be generated once, at
+# character creation, and never grew again -- so any player either outran
+# their own generation's age band or (early game) never had enough of a
+# same-age pool to begin with (dating, school, friends). Replenish a small
+# cohort of young people (kids through young adults) every year so the
+# world keeps producing new same-age people as the player ages, instead of
+# relying entirely on the original one-time seed.
+const YOUNG_REPLENISH_MIN_PER_YEAR:= 4
+const YOUNG_REPLENISH_MAX_PER_YEAR:= 8
+const YOUNG_REPLENISH_MIN_AGE:= 1
+const YOUNG_REPLENISH_MAX_AGE:= 20
+
 func _init(_gs):
 	gs = _gs
 
@@ -19,6 +31,21 @@ func yearly_evaluate() -> void:
 	_apply_population_pressure_to_factions()
 	_demote_active_population()
 	_trim_dormant_population()
+	_replenish_young_population()
+
+
+func _replenish_young_population() -> void:
+	if gs == null or gs.npc_factory == null:
+		return
+
+	var new_count: int = randi_range(YOUNG_REPLENISH_MIN_PER_YEAR, YOUNG_REPLENISH_MAX_PER_YEAR)
+	for _i in range(new_count):
+		var npc: Person = gs.npc_factory.create_random_npc(false)
+		if npc == null:
+			continue
+		npc.age = randi_range(YOUNG_REPLENISH_MIN_AGE, YOUNG_REPLENISH_MAX_AGE)
+		npc.bank_balance = randf_range(1000, 500000) if npc.age >= 18 else 0.0
+		gs.register_npc(npc)
 
 
 

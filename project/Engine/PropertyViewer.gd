@@ -1208,8 +1208,8 @@ func _render_makeover(contract: Dictionary) -> void:
 
 	if paths.is_empty():
 		_add_card(
-			"MAKEOVER PATHS NOT OBSERVABLE",
-			"CRR blocked a blank makeover surface. The property exists, but no upgrade paths were attached to this render contract."
+			"NO MAKEOVER PATHS AVAILABLE",
+			"The property exists, but no upgrade paths are available for it right now."
 		)
 
 		var fallback_button:= Button.new()
@@ -1264,7 +1264,7 @@ func _render_makeover(contract: Dictionary) -> void:
 
 		if option_count <= 0:
 			var unavailable:= Label.new()
-			unavailable.text = "No selectable actions were attached to this makeover path."
+			unavailable.text = "No actions are available for this makeover path."
 			unavailable.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 			content_box.add_child(unavailable)
 

@@ -848,6 +848,23 @@ func get_runtime_school_session_catalog(context: Dictionary = {}) -> Array:
 func yearly_school_tick(
 	_payload = {}
 ):
+	# DIAGNOSTIC: confirms whether the yearly phase scheduler is actually
+	# invoking this tick at all for a given year, before anything else runs.
+	EraLog.truth(
+		"ERALIFE_SCHOOL_YEARLY_TICK_ENTERED|gs_null=%s|player_null=%s|year=%s"
+		% [
+			str(
+				gs == null
+			),
+			str(
+				gs == null or gs.player == null
+			),
+			str(
+				gs.year if gs != null else -1
+			)
+		]
+	)
+
 	if gs == null:
 		return
 
@@ -861,9 +878,39 @@ func yearly_school_tick(
 		)
 
 	if gs.player != null:
-		_commit_minor_school_stage_entry_if_due(
-			gs.player,
-			"school_engine.yearly_school_tick.controlled_actor"
+		# DIAGNOSTIC: Brandon reports a 16-year-old who was never enrolled in
+		# any school, stuck permanently on "Parent / Guardian Decides" with
+		# no prompt ever firing again. An isolated test confirmed the commit
+		# path itself (_commit_minor_school_stage_entry_if_due ->
+		# _ensure_minor_school_stage_plan_for_simulation -> _enroll) works
+		# correctly for a fresh character with no prior plan history, so the
+		# break is either this tick never running for his save (possible
+		# yearly-phase scheduler deferral/starvation over a long save) or a
+		# stale plan record from an earlier stage interfering. Log the
+		# commit result every single year so we can see directly which one.
+		var commit_result: Dictionary = (
+			_commit_minor_school_stage_entry_if_due(
+				gs.player,
+				"school_engine.yearly_school_tick.controlled_actor"
+			)
+		)
+
+		EraLog.truth(
+			"ERALIFE_SCHOOL_YEARLY_COMMIT|actor_id=%d|age=%d|year=%d|result=%s"
+			% [
+				int(
+					gs.player.id
+				),
+				int(
+					gs.player.age
+				),
+				int(
+					gs.year
+				),
+				str(
+					commit_result
+				)
+			]
 		)
 
 
@@ -2961,11 +3008,39 @@ func _next_minor_school_transition_for(
 			)
 		)
 
-		if (
-			start_age < 0
-			or age >= start_age
-		):
+		if start_age < 0:
 			continue
+
+		# FIX: this used to skip straight past a stage the instant
+		# age >= start_age, whether or not an enrollment decision was ever
+		# made for it. "planning_due" below was only ever true for a single
+		# year (age == start_age - 1); miss that one year -- e.g. the
+		# enrollment scenario lost out to other life events that year, or
+		# the character started play already past it -- and this function
+		# would jump straight to the *next* stage forever after, so nothing
+		# ever asked for a decision again and the School Hub stayed stuck
+		# on "Parent / Guardian Decides" permanently. Only skip an overdue
+		# stage once it actually has a plan on record; otherwise keep
+		# surfacing it as due every year until it's resolved.
+		if age >= start_age:
+			if not _minor_school_stage_plan_for(
+				person,
+				stage_key
+			).is_empty():
+				continue
+
+			return {
+				"stage_key": stage_key,
+				"stage_display": (
+					_school_stage_display_name(
+						stage_key
+					)
+				),
+				"start_age": start_age,
+				"current_age": age,
+				"years_until": 0,
+				"planning_due": true
+			}
 
 		return {
 			"stage_key": stage_key,
@@ -6491,15 +6566,27 @@ func _school_profile_for(school_name: String, mode: String, _person: Person) -> 
 
 	match era_name:
 		"Ancient Era":
+			# FIX: institution_type detection used to check for "agoge" and
+			# "scholar", neither of which appears in any actual Ancient Era
+			# school name ("Temple Tutoring", "Royal Academy", "Scribe
+			# School", "Warrior Training Yard" -- see
+			# _era_school_type_contract_names_for_stage()). "Warrior
+			# Training Yard" always silently fell through to the
+			# "temple_tutoring" default, which is why a student enrolled
+			# at the Warrior Training Yard saw a Scribe Lessons class
+			# list. Match on the words that actually appear in the names
+			# instead, and give each institution_type its own class list,
+			# ambient events, and friction content instead of sharing one
+			# generic bucket.
 			var institution_type: String = "temple_tutoring"
-			if lower_school.find("agoge") >= 0:
+			if lower_school.find("warrior") >= 0:
 				institution_type = "warrior_training_yard"
 			elif lower_school.find("academy") >= 0:
 				institution_type = "royal_academy"
-			elif lower_school.find("scholar") >= 0:
+			elif lower_school.find("scribe") >= 0:
 				institution_type = "scribe_school"
 
-			return {
+			var shared_profile: Dictionary = {
 				"institution_type": institution_type,
 				"class_surface_label": "Lessons",
 				"meal_surface_label": "Communal Meal Courtyard",
@@ -6507,23 +6594,99 @@ func _school_profile_for(school_name: String, mode: String, _person: Person) -> 
 				"hallway_label": "Courtyard Walkway",
 				"hallway_activity": "moving between lessons and drills",
 				"social_surface_label": "Court / Temple Social Pressure",
-				"has_modern_lunchroom": false,
-				"classes": ["Scribe Lessons", "Ritual Memory", "Numbers And Grain", "Discipline Yard"],
-				"ambient_events": [
-					"A tutor praised my memory in front of the other students.",
-					"I copied symbols until my hand cramped.",
-					"A student whispered that my family name carried weight.",
-					"The courtyard felt louder than the lesson."
-				],
-				"friction_templates": [
-					"During the communal meal courtyard, {antagonist} laughed when my clay tablet cracked. {helper} helped me gather the pieces before the tutor saw.",
-					"{antagonist} mocked my recitation in the temple hall. {helper} whispered the next line before I froze.",
-					"At the training yard meal break, {antagonist} called my stance soft. {helper} told me to keep my chin up."
-				],
-				"crush_line": "Someone lingered near the courtyard after lessons like they wanted to speak.",
-				"jealous_line": "I compared my progress to students with stronger family names.",
-				"impulsive_line": "I nearly answered a temple insult louder than wisdom allowed."
+				"has_modern_lunchroom": false
 			}
+
+			match institution_type:
+				"warrior_training_yard":
+					shared_profile ["classes"] = [
+						"Discipline Yard",
+						"Spear And Shield Drills",
+						"Endurance Running",
+						"Battle Tactics"
+					]
+					shared_profile ["ambient_events"] = [
+						"A drill master called my stance soft in front of the yard.",
+						"My arms shook from holding the shield position too long.",
+						"A student sized me up before sparring and said nothing.",
+						"The yard went quiet right before the run began."
+					]
+					shared_profile ["friction_templates"] = [
+						"During drills, {antagonist} called my stance soft and laughed. {helper} told me to keep my chin up and reset.",
+						"{antagonist} pushed the sparring pace too hard on purpose. {helper} stepped between us before it turned into a real fight.",
+						"At the training yard meal break, {antagonist} mocked how far behind I was on the run. {helper} reminded everyone I'd closed the gap all season."
+					]
+					shared_profile ["crush_line"] = "Someone kept ending up paired with me for sparring drills."
+					shared_profile ["jealous_line"] = "I compared my form to students who'd trained since they could walk."
+					shared_profile ["impulsive_line"] = "I nearly turned a sparring drill into a real fight."
+
+				"royal_academy":
+					shared_profile ["classes"] = [
+						"Court Etiquette",
+						"Rhetoric And Oratory",
+						"Numbers And Grain",
+						"Royal Lineage Study"
+					]
+					shared_profile ["ambient_events"] = [
+						"A tutor corrected my posture in front of visiting nobles.",
+						"I memorized a lineage chart until the names blurred together.",
+						"A student measured my family's standing before deciding to speak to me.",
+						"The court hall felt colder than the lesson."
+					]
+					shared_profile ["friction_templates"] = [
+						"During a recitation, {antagonist} mocked my family's standing. {helper} reminded the room whose lineage actually mattered.",
+						"{antagonist} corrected my etiquette loudly enough for the tutor to notice. {helper} smoothed it over before it became a mark against me.",
+						"At the court meal, {antagonist} needled me about my family's influence. {helper} changed the subject before I said something I'd regret."
+					]
+					shared_profile ["crush_line"] = "Someone from a rival family kept finding reasons to sit near me."
+					shared_profile ["jealous_line"] = "I compared my family's standing to students with stronger names."
+					shared_profile ["impulsive_line"] = "I nearly answered a slight against my family louder than etiquette allowed."
+
+				"scribe_school":
+					shared_profile ["classes"] = [
+						"Scribe Lessons",
+						"Clay Tablet Practice",
+						"Numbers And Ledgers",
+						"Royal Correspondence"
+					]
+					shared_profile ["ambient_events"] = [
+						"A tutor praised my memory in front of the other students.",
+						"I copied symbols until my hand cramped.",
+						"A student whispered that my family name carried weight.",
+						"The courtyard felt louder than the lesson."
+					]
+					shared_profile ["friction_templates"] = [
+						"During the communal meal courtyard, {antagonist} laughed when my clay tablet cracked. {helper} helped me gather the pieces before the tutor saw.",
+						"{antagonist} mocked my recitation in front of the other scribes. {helper} whispered the next line before I froze.",
+						"At the courtyard meal, {antagonist} called my handwriting childish. {helper} pointed out I'd already fixed it."
+					]
+					shared_profile ["crush_line"] = "Someone lingered near the courtyard after lessons like they wanted to speak."
+					shared_profile ["jealous_line"] = "I compared my progress to students with stronger family names."
+					shared_profile ["impulsive_line"] = "I nearly answered an insult louder than wisdom allowed."
+
+				_:
+					shared_profile ["classes"] = [
+						"Ritual Memory",
+						"Hymn Recitation",
+						"Numbers And Grain",
+						"Temple Keeping"
+					]
+					shared_profile ["ambient_events"] = [
+						"A tutor praised my memory in front of the other students.",
+						"I recited the hymn cycle until the words lost meaning.",
+						"A student whispered that my family name carried weight.",
+						"The temple felt quieter than the lesson."
+					]
+					shared_profile ["friction_templates"] = [
+						"During the communal meal courtyard, {antagonist} laughed when I stumbled over a ritual line. {helper} whispered the next line before I froze.",
+						"{antagonist} mocked my recitation in the temple hall. {helper} covered for me before the tutor noticed.",
+						"At the courtyard meal, {antagonist} called my family's devotion for show. {helper} told me to keep my chin up."
+					]
+					shared_profile ["crush_line"] = "Someone lingered near the temple steps after lessons like they wanted to speak."
+					shared_profile ["jealous_line"] = "I compared my progress to students with stronger family names."
+					shared_profile ["impulsive_line"] = "I nearly answered a temple insult louder than wisdom allowed."
+
+			return shared_profile
 
 		"Medieval Era":
 			var medieval_type: String = "monastery_education"
@@ -6588,58 +6751,277 @@ func _school_profile_for(school_name: String, mode: String, _person: Person) -> 
 			}
 
 		"Modern Era":
-			return {
-				"institution_type": "modern_school",
+			# FIX: every Modern Era school option (Public/Private/Boarding/
+			# Military High School, plus the preschool/elementary/middle
+			# equivalents -- see _era_school_type_contract_names_for_stage())
+			# used to share this exact same profile, so a Military High
+			# School student got the same lunchroom-drama flavor as a
+			# Public School student. Detect the actual school type from its
+			# name the same way Ancient Era now does, and give each its own
+			# classes/flavor.
+			var modern_type: String = "modern_school_public"
+			if lower_school.find("military") >= 0:
+				modern_type = "modern_school_military"
+			elif lower_school.find("boarding") >= 0:
+				modern_type = "modern_school_boarding"
+			elif lower_school.find("private") >= 0:
+				modern_type = "modern_school_private"
+
+			var modern_profile: Dictionary = {
+				"institution_type": modern_type,
 				"class_surface_label": "Classrooms",
 				"meal_surface_label": "Lunchroom",
 				"meal_activity": "sitting in the lunchroom",
 				"hallway_label": "Hallways",
 				"hallway_activity": "moving through the halls",
 				"social_surface_label": "Cliques / Rumors / Crushes",
-				"has_modern_lunchroom": true,
-				"classes": ["Homeroom", "Math", "Science", "History", "Elective"],
-				"ambient_events": [
-					"A teacher praised my answer and the room reacted.",
-					"The hallway had more drama than the lesson.",
-					"A group kept whispering every time I passed.",
-					"The lunchroom made every friendship feel public."
-				],
-				"friction_templates": [
-					"During lunch, {antagonist} laughed when my tray slipped. {helper} helped me clean it up. My reputation shifted.",
-					"In the hallway, {antagonist} repeated a rumor loud enough for me to hear. {helper} walked beside me like it did not matter.",
-					"At lunch, {antagonist} tried to make me the joke of the table. {helper} changed the subject before it stuck."
-				],
-				"crush_line": "A classmate seemed to have a crush on me.",
-				"jealous_line": "I caught myself comparing my life to everyone else's highlight reel.",
-				"impulsive_line": "I nearly turned a hallway comment into a whole incident."
+				"has_modern_lunchroom": true
 			}
 
+			match modern_type:
+				"modern_school_military":
+					modern_profile ["classes"] = [
+						"Formation Drill",
+						"Math",
+						"Physical Training",
+						"History",
+						"Leadership Lab"
+					]
+					modern_profile ["meal_surface_label"] = "Mess Hall"
+					modern_profile ["meal_activity"] = "eating on the clock in the mess hall"
+					modern_profile ["hallway_label"] = "Formation Line"
+					modern_profile ["hallway_activity"] = "falling into formation between periods"
+					modern_profile ["social_surface_label"] = "Rank / Discipline Pressure"
+					modern_profile ["ambient_events"] = [
+						"An instructor called out my posture in front of the formation.",
+						"The hallway fell silent the second rank was mentioned.",
+						"A cadet one rank up made sure I knew it.",
+						"The mess hall ran on a clock, not an appetite."
+					]
+					modern_profile ["friction_templates"] = [
+						"During mess, {antagonist} called out my rank in front of everyone. {helper} reminded them I'd outscored them on the last drill.",
+						"In formation, {antagonist} needled me for being out of step. {helper} matched my pace so I could catch it.",
+						"At inspection, {antagonist} tried to get me written up over nothing. {helper} vouched for me before it stuck."
+					]
+					modern_profile ["crush_line"] = "A cadet kept ending up next to me in formation, and it didn't seem like an accident."
+					modern_profile ["jealous_line"] = "I compared my rank to cadets who seemed to earn theirs without trying."
+					modern_profile ["impulsive_line"] = "I nearly mouthed off to an instructor in front of the whole formation."
+
+				"modern_school_boarding":
+					modern_profile ["classes"] = [
+						"Homeroom",
+						"Math",
+						"Science",
+						"History",
+						"Prep Seminar"
+					]
+					modern_profile ["meal_surface_label"] = "Dining Hall"
+					modern_profile ["meal_activity"] = "eating in the dining hall with the same faces as always"
+					modern_profile ["hallway_label"] = "Dormitory Wing"
+					modern_profile ["hallway_activity"] = "moving between the dorm and the halls"
+					modern_profile ["social_surface_label"] = "Dorm Politics / Homesickness"
+					modern_profile ["ambient_events"] = [
+						"My roommate's business became the whole hall's business by morning.",
+						"The dining hall gossip moved faster than the school newsletter.",
+						"Lights-out got enforced right as a conversation got interesting.",
+						"The campus felt smaller every week I stayed on it."
+					]
+					modern_profile ["friction_templates"] = [
+						"In the dining hall, {antagonist} repeated something I'd only told my roommate. {helper} told me who actually talked.",
+						"In the dorm wing, {antagonist} made a show of excluding me from a hall tradition. {helper} looped me back in anyway.",
+						"After lights-out, {antagonist} spread a rumor that followed me into the morning. {helper} shut it down before homeroom."
+					]
+					modern_profile ["crush_line"] = "Someone from the other dorm wing kept finding reasons to walk past mine."
+					modern_profile ["jealous_line"] = "I compared how often my family visited to how often everyone else's did."
+					modern_profile ["impulsive_line"] = "I nearly broke curfew over a hallway argument that wasn't worth it."
+
+				"modern_school_private":
+					modern_profile ["classes"] = [
+						"Homeroom",
+						"Math",
+						"Science",
+						"History",
+						"College Prep Seminar"
+					]
+					modern_profile ["ambient_events"] = [
+						"A teacher assumed everyone already had a tutor lined up.",
+						"The hallway conversation was about colleges before it was about anything else.",
+						"Someone's family name got mentioned like it was a credential.",
+						"The lunchroom felt like a smaller, better-dressed version of everywhere else."
+					]
+					modern_profile ["friction_templates"] = [
+						"During lunch, {antagonist} made a point of mentioning what their family paid for. {helper} reminded me grades weren't for sale.",
+						"In the hallway, {antagonist} name-dropped a connection to put me in my place. {helper} wasn't impressed, and said so.",
+						"At lunch, {antagonist} turned my scholarship into a punchline. {helper} changed the subject before it stuck."
+					]
+					modern_profile ["crush_line"] = "A classmate seemed to have a crush on me, somewhere between genuine and strategic."
+					modern_profile ["jealous_line"] = "I caught myself comparing my family's name to everyone else's."
+					modern_profile ["impulsive_line"] = "I nearly said something about someone's trust fund I couldn't take back."
+
+				_:
+					modern_profile ["classes"] = [
+						"Homeroom",
+						"Math",
+						"Science",
+						"History",
+						"Elective"
+					]
+					modern_profile ["ambient_events"] = [
+						"A teacher praised my answer and the room reacted.",
+						"The hallway had more drama than the lesson.",
+						"A group kept whispering every time I passed.",
+						"The lunchroom made every friendship feel public."
+					]
+					modern_profile ["friction_templates"] = [
+						"During lunch, {antagonist} laughed when my tray slipped. {helper} helped me clean it up. My reputation shifted.",
+						"In the hallway, {antagonist} repeated a rumor loud enough for me to hear. {helper} walked beside me like it did not matter.",
+						"At lunch, {antagonist} tried to make me the joke of the table. {helper} changed the subject before it stuck."
+					]
+					modern_profile ["crush_line"] = "A classmate seemed to have a crush on me."
+					modern_profile ["jealous_line"] = "I caught myself comparing my life to everyone else's highlight reel."
+					modern_profile ["impulsive_line"] = "I nearly turned a hallway comment into a whole incident."
+
+			return modern_profile
+
 		"Future Era":
-			return {
-				"institution_type": "future_learning_ecosystem",
-				"class_surface_label": "Learning Modules",
-				"meal_surface_label": "Nutrient Commons",
-				"meal_activity": "taking a nutrient break",
-				"hallway_label": "Transit Spine",
-				"hallway_activity": "moving between smart classrooms",
-				"social_surface_label": "Algorithmic Social Pressure",
-				"has_modern_lunchroom": true,
-				"classes": ["AI Tutor Sync", "Simulation Lab", "Ethics Module", "Skill Pod"],
-				"ambient_events": [
-					"The AI tutor adjusted the lesson before I admitted I was confused.",
-					"A classmate's ranking update changed the mood instantly.",
-					"The simulation lab exposed who panicked under pressure.",
-					"The nutrient commons tracked everything except the awkward silence."
-				],
-				"friction_templates": [
-					"During nutrient break, {antagonist} laughed when my simulation score flashed red. {helper} patched my module before the ranking locked.",
-					"In the transit spine, {antagonist} leaked my learning score. {helper} flooded the feed with distractions.",
-					"At the nutrient commons, {antagonist} used the class algorithm against me. {helper} helped me appeal the score."
-				],
-				"crush_line": "Someone kept syncing their study pod schedule with mine.",
-				"jealous_line": "I compared myself to students whose learning scores updated like celebrity stats.",
-				"impulsive_line": "I nearly challenged the school algorithm in public."
+			# FIX: same gap as Modern Era -- every Future Era school option
+			# (Learning Pod, AI Academy, Simulation School, Orbital Academy,
+			# plus Early Learning Pod / AI Preschool at the younger stage --
+			# see _era_school_type_contract_names_for_stage()) used to share
+			# this one profile. Detect the type from the name and give each
+			# its own classes/flavor. Reskinned with a cyberpunk tone per
+			# Brandon's request: neon-lit megacity schools, corpo
+			# sponsorship, neural jacks, black-market code, and a social
+			# credit score instead of plain "rankings."
+			var future_type: String = "future_ai_academy"
+			if lower_school.find("orbital") >= 0:
+				future_type = "future_orbital_academy"
+			elif lower_school.find("simulation") >= 0:
+				future_type = "future_simulation_school"
+			elif lower_school.find("pod") >= 0:
+				future_type = "future_learning_pod"
+			elif lower_school.find("ai") >= 0:
+				future_type = "future_ai_academy"
+
+			var future_profile: Dictionary = {
+				"institution_type": future_type,
+				"has_modern_lunchroom": true
 			}
+
+			match future_type:
+				"future_learning_pod":
+					future_profile ["class_surface_label"] = "Pod Uplink Sessions"
+					future_profile ["meal_surface_label"] = "Synth-Noodle Pod Bay"
+					future_profile ["meal_activity"] = "slurping synth-noodles under a flickering corpo logo with the same small pod every day"
+					future_profile ["hallway_label"] = "Stacked Pod Cluster"
+					future_profile ["hallway_activity"] = "squeezing past recharging drones between pod capsules"
+					future_profile ["social_surface_label"] = "Close-Quarters Surveillance Pressure"
+					future_profile ["classes"] = [
+						"Neural Jack Orientation",
+						"Adaptive Math (Sponsored)",
+						"Corpo Ethics Module",
+						"Collaborative Build Project"
+					]
+					future_profile ["ambient_events"] = [
+						"My pod's sponsor logo buzzed on the capsule wall all through the lesson.",
+						"A maintenance drone scanned the pod bay and nobody looked up.",
+						"A pod-mate's neural jack glitched and froze their whole feed for a second.",
+						"There was nowhere to disappear into in a capsule this small."
+					]
+					future_profile ["friction_templates"] = [
+						"During uplink session, {antagonist} broadcast my glitchy answer to the whole pod before I could fix it. {helper} cut the feed and backed me up anyway.",
+						"In the pod cluster, {antagonist} flagged my build score to the sponsor rep. {helper} pointed out theirs was worse last cycle.",
+						"At the noodle bay, {antagonist} tried to get the pod reshuffled to cut me out. {helper} refused to switch capsules."
+					]
+					future_profile ["crush_line"] = "Stuck in the same cramped pod every cycle, it got impossible not to notice someone through the static."
+					future_profile ["jealous_line"] = "I compared my build score to pod-mates whose families could afford a better jack."
+					future_profile ["impulsive_line"] = "I nearly ripped my jack out mid-session rather than sit through another glitch."
+
+				"future_simulation_school":
+					future_profile ["class_surface_label"] = "Full-Dive Simulation Sessions"
+					future_profile ["meal_surface_label"] = "Glitch Debrief Lounge"
+					future_profile ["meal_activity"] = "decompressing under neon signage after jacking out of a full-dive run"
+					future_profile ["hallway_label"] = "Sim Bay Corridor"
+					future_profile ["hallway_activity"] = "moving past humming dive-rigs between simulation bays"
+					future_profile ["social_surface_label"] = "Performance Replay / Clout Score Pressure"
+					future_profile ["classes"] = [
+						"Scenario Infiltration Training",
+						"Full-Dive Simulation Lab",
+						"Corpo Ethics Module",
+						"Crisis Response Drill"
+					]
+					future_profile ["ambient_events"] = [
+						"My simulation run got clipped and replayed on the lounge's big screen.",
+						"The dive-rig's neon ring flickered right as my sim crashed.",
+						"A classmate's panic in yesterday's scenario was still trending on the school feed.",
+						"The debrief lounge replayed my worst moment in slow-motion, in full chrome detail."
+					]
+					future_profile ["friction_templates"] = [
+						"At the debrief lounge, {antagonist} looped my worst simulation crash for laughs on the big screen. {helper} queued up their blooper reel right after.",
+						"In the sim bay corridor, {antagonist} needled me about freezing mid-dive during the crisis drill. {helper} reminded them everyone glitches once.",
+						"During infiltration training, {antagonist} planted a corrupted file to sabotage my run. {helper} caught the tamper log before I got blamed."
+					]
+					future_profile ["crush_line"] = "Someone kept volunteering to jack in as my dive partner, and it stopped being about the simulation."
+					future_profile ["jealous_line"] = "I compared my clout score to classmates whose dive-rigs never seemed to lag."
+					future_profile ["impulsive_line"] = "I nearly yanked my own jack mid-dive rather than watch the debrief again."
+
+				"future_orbital_academy":
+					future_profile ["class_surface_label"] = "Orbital Uplink Coursework"
+					future_profile ["meal_surface_label"] = "Observation Deck Ration Bay"
+					future_profile ["meal_activity"] = "eating a corpo-branded nutrient ration under neon ring-lights with Earth turning slowly outside the viewport"
+					future_profile ["hallway_label"] = "Ring Corridor"
+					future_profile ["hallway_activity"] = "moving along the station's ring corridor past flickering ad-holograms"
+					future_profile ["social_surface_label"] = "Close-Quarters Corpo-Station Pressure"
+					future_profile ["classes"] = [
+						"Orbital Mechanics",
+						"Adaptive Math (Sponsored)",
+						"Corpo Ethics Module",
+						"Systems / Black-ICE Maintenance Lab"
+					]
+					future_profile ["ambient_events"] = [
+						"Everyone on the station already knew everyone's business — the comms logs saw to that.",
+						"The observation deck's ad-hologram made the whole planet feel very far away and very small.",
+						"A drill alarm cut the lesson's neon lighting to combat-red again.",
+						"Someone homesick for gravity stared past the sponsor logos and out the viewport longer than usual."
+					]
+					future_profile ["friction_templates"] = [
+						"At the ration bay, {antagonist} pulled something straight off my comms log that I'd only told one person. {helper} told me who actually sold it.",
+						"In the ring corridor, {antagonist} made a show of excluding me from the station's social feed. {helper} looped me back in anyway.",
+						"During a drill, {antagonist} blamed me for a system fault that wasn't mine. {helper} pulled the real logs in front of the instructor."
+					]
+					future_profile ["crush_line"] = "There's only so many people on a station under one corpo logo, and I kept noticing the same one."
+					future_profile ["jealous_line"] = "I compared how often my family's corpo tier could afford the comm-link to how often everyone else's called."
+					future_profile ["impulsive_line"] = "I nearly said something I couldn't take back in a corridor wired for sound."
+
+				_:
+					future_profile ["class_surface_label"] = "Neural Uplink Coursework"
+					future_profile ["meal_surface_label"] = "Synth-Noodle Commons"
+					future_profile ["meal_activity"] = "eating synth-noodles under a wall of flickering sponsor ads"
+					future_profile ["hallway_label"] = "Neon Transit Spine"
+					future_profile ["hallway_activity"] = "moving through the neon-lit concourse between smart classrooms"
+					future_profile ["social_surface_label"] = "Algorithmic Clout Score Pressure"
+					future_profile ["classes"] = [
+						"AI Tutor Neural Sync",
+						"Full-Dive Simulation Lab",
+						"Corpo Ethics Module",
+						"Black-Market Code Workshop"
+					]
+					future_profile ["ambient_events"] = [
+						"The AI tutor jacked straight into my feed and adjusted the lesson before I admitted I was lost.",
+						"A classmate's clout score ticked up on the concourse boards and the whole hallway reacted.",
+						"The simulation lab's full-dive rig exposed who panicked under pressure, in full chrome detail.",
+						"The synth-noodle commons tracked everything on the feed except the awkward silence."
+					]
+					future_profile ["friction_templates"] = [
+						"During the noodle break, {antagonist} laughed when my simulation score flashed red across the concourse board. {helper} patched my module before the ranking locked.",
+						"In the neon transit spine, {antagonist} leaked my learning score to the whole feed. {helper} flooded it with distractions before it trended.",
+						"At the commons, {antagonist} used the class algorithm to tank my clout score. {helper} helped me file the appeal before the next sync."
+					]
+					future_profile ["crush_line"] = "Someone kept syncing their study schedule with mine, and the AI tutor definitely noticed before I did."
+					future_profile ["jealous_line"] = "I compared myself to students whose clout scores updated like celebrity stats."
+					future_profile ["impulsive_line"] = "I nearly hacked my own ranking just to make the feed stop."
+
+			return future_profile
 
 	return {
 		"institution_type": "school",

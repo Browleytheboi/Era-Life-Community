@@ -502,7 +502,7 @@ func request_prewarm_from_current_state(
 		)
 	) + 1
 	var status_text: String = (
-		"Prewarm request received. Selecting your resident reality."
+		"Request received. Preparing your world."
 	)
 
 	set_meta(
@@ -1140,6 +1140,17 @@ func _tick_avatar_bending_picker_border() -> void:
 		alpha
 	)
 func _build() -> void:
+	# DIAGNOSTIC: confirm this exact _build() is the one running, and what the
+	# feature checkbox list looks like at the moment it builds. Temporary --
+	# remove once the Wizard Magic checkbox visibility question is settled.
+	EraLog.truth(
+		"ERALIFE_GOD_MODE_VIEWER_BUILD|script_path=%s|feature_list=%s"
+		% [
+			get_script().resource_path if get_script() != null else "-",
+			str(["Bending", "Wizard Magic", "Artifacts", "Dragon Balls", "Many Realms", "Supernatural School", "Supernatural Events"])
+		]
+	)
+
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -1425,10 +1436,10 @@ func _build() -> void:
 		"Customize Your Features"
 	)
 
-	for feature in ["Bending", "Artifacts", "Dragon Balls", "Many Realms", "Supernatural School", "Supernatural Events"]:
+	for feature in ["Bending", "Wizard Magic", "Vampires", "Artifacts", "Dragon Balls", "Many Realms", "Supernatural School", "Supernatural Events"]:
 		var check:= CheckBox.new()
 		check.text = feature
-		check.button_pressed = feature in ["Bending", "Artifacts", "Dragon Balls", "Many Realms", "Supernatural School", "Supernatural Events"]
+		check.button_pressed = feature in ["Bending", "Wizard Magic", "Vampires", "Artifacts", "Dragon Balls", "Many Realms", "Supernatural School", "Supernatural Events"]
 		check.toggled.connect(func (_pressed: bool) -> void:
 			_on_feature_changed()
 		)
@@ -1755,6 +1766,8 @@ func _viewer_feature_key_to_settings_key(raw_key: Variant) -> String:
 	match clean_key:
 		"bending":
 			return "bending"
+		"wizard_magic", "wizard", "wizards":
+			return "wizard_magic"
 		"super_power", "super_powers", "superpower", "superpowers":
 			return "superpowers"
 		"vampire", "vampires":
@@ -1774,10 +1787,13 @@ func _viewer_feature_key_to_settings_key(raw_key: Variant) -> String:
 
 
 func _viewer_default_feature_state_for_mode(mode_text: String) -> Dictionary:
+	# wizard_magic groups with bending/supernatural_school/supernatural_events,
+	# matching GameState.is_feature_enabled()'s own per-mode grouping.
 	match _viewer_canonical_reality_mode(mode_text):
 		"realistic":
 			return {
 				"bending": false,
+				"wizard_magic": false,
 				"superpowers": false,
 				"vampires": false,
 				"artifacts": false,
@@ -1787,6 +1803,7 @@ func _viewer_default_feature_state_for_mode(mode_text: String) -> Dictionary:
 		"enhanced":
 			return {
 				"bending": true,
+				"wizard_magic": true,
 				"superpowers": false,
 				"vampires": false,
 				"artifacts": false,
@@ -1796,6 +1813,7 @@ func _viewer_default_feature_state_for_mode(mode_text: String) -> Dictionary:
 		_:
 			return {
 				"bending": true,
+				"wizard_magic": true,
 				"superpowers": true,
 				"vampires": true,
 				"artifacts": true,
@@ -3050,16 +3068,88 @@ func _sync_from_engine() -> void:
 			status_text = "God Mode loadout captured."
 
 		"prewarm_requested":
-			status_text = "Prewarming your world seed. UI remains only a viewer."
+			# FIX: this used to be one static line for the entire prewarm
+			# duration -- Brandon watched the bar climb 1% to 100% under this
+			# exact same sentence the whole time and reported it as looking
+			# stuck, since none of the actual per-stage work (including the
+			# new ambient-population seeding, the heaviest single step) ever
+			# showed here. This is the real screen players watch when
+			# starting a God Mode life -- MainScene.gd's own prewarm
+			# label/button plumbing is a separate, parallel system this
+			# screen doesn't use at all. Pull the live stage directly off the
+			# GameState actually running the resident bootstrap plan.
+			status_text = "Setting up your world..."
+			# NOTE: engine.prewarmed_game_state, engine.gs, and MainScene's
+			# plain `gs` were all tried and ruled out (confirmed via
+			# ERALIFE_GODMODE_VIEWER_PREWARM_STATUS showing live_stage_id
+			# always empty each time). MainScene's `gs` is only assigned at
+			# final attach (_adopt_attached_resident_game_state(): `gs =
+			# resident_gs`) -- during the entire bootstrap/spawning phase
+			# this fix needs, the live chassis actually building the life
+			# lives in a *different* field, `reality_residency_host_game_
+			# state`, which MainScene's own confirmed-working residency
+			# observer (_request_reality_residency_intent()) checks *before*
+			# falling back to `gs`. Use that same priority order here.
+			var live_stage_id: String = ""
+			var live_stage_label: String = ""
+			var live_gs: GameState = null
+			var scene_tree: SceneTree = get_tree()
+			if scene_tree != null and scene_tree.current_scene != null:
+				var main_scene: Object = scene_tree.current_scene
+				if "reality_residency_host_game_state" in main_scene:
+					var host_candidate: Variant = main_scene.get("reality_residency_host_game_state")
+					if host_candidate is GameState:
+						live_gs = host_candidate
+				if live_gs == null and "gs" in main_scene:
+					var gs_candidate: Variant = main_scene.get("gs")
+					if gs_candidate is GameState:
+						live_gs = gs_candidate
+			# Read via resident_runtime_bootstrap_snapshot() instead of the
+			# scenario_state["resident_runtime_active_authority_step"] key --
+			# that key stayed empty in every diagnostic run regardless of
+			# which GameState reference was used. This function is the exact
+			# calculation the confirmed-working ERALIFE_RESIDENCY_OBSERVER
+			# log already reads its own correct "stage=..." values from
+			# (computed live off the object's own bootstrap-cursor instance
+			# variables, not a scenario_state side-channel), so it's the
+			# proven-reliable source instead of a second guess at a key name.
+			if live_gs != null and live_gs.has_method("resident_runtime_bootstrap_snapshot"):
+				var snapshot: Dictionary = live_gs.resident_runtime_bootstrap_snapshot()
+				live_stage_id = str(snapshot.get("stage_id", "")).strip_edges()
+				live_stage_label = str({
+					"apply_reality_settings": "Setting up the world.",
+					"spawn_shell_population": "Please wait, loading background people...",
+					"create_player_identity": "Creating your character.",
+					"apply_birth_contracts": "Setting up your birth and household.",
+					"seal_resident_reality": "Finishing up."
+				}.get(live_stage_id, ""))
+				if live_stage_label != "":
+					status_text = live_stage_label
+
+			# DIAGNOSTIC: pins exactly why the live per-stage text isn't
+			# reaching this screen -- is the MainScene reference reachable,
+			# does it have the snapshot method, does the snapshot resolve to
+			# a mapped stage label. Three earlier fix attempts here failed
+			# silently with no way to tell which assumption was wrong.
+			EraLog.truth(
+				"ERALIFE_GODMODE_VIEWER_PREWARM_STATUS|live_gs_found=%s|has_snapshot_method=%s|live_stage_id=%s|live_stage_label_empty=%s|final_status_text=%s"
+				% [
+					str(live_gs != null),
+					str(live_gs != null and live_gs.has_method("resident_runtime_bootstrap_snapshot")),
+					live_stage_id,
+					str(live_stage_label == ""),
+					status_text
+				]
+			)
 
 		"prewarm_ready":
-			status_text = "Reality prewarmed. The room exists. Ready opens the door."
+			status_text = "Your world is ready. Press Ready to begin."
 
 		"handoff_emitted":
-			status_text = "Handoff emitted. Life owns the screen."
+			status_text = "Starting your life..."
 
 		"surface_claimed":
-			status_text = "Playable surface claimed."
+			status_text = "You're in control now."
 
 		"entry_complete":
 			status_text = "Entry complete."
@@ -3115,7 +3205,7 @@ func _apply_mode_constraints(mode: String) -> void:
 			"realistic":
 				enabled = false
 			"enhanced":
-				enabled = canonical_key in ["bending", "supernatural_school", "supernatural_events"]
+				enabled = canonical_key in ["bending", "wizard_magic", "supernatural_school", "supernatural_events"]
 			"chaos":
 				enabled = true
 			_:

@@ -3915,7 +3915,7 @@ func _build_continue_lineage_toggle_prompt(
 		return {
 			"success": false,
 			"type": "afterlife_continue_lineage_unavailable",
-			"text": "The continuation contract is unavailable.",
+			"text": "You can't continue your lineage right now.",
 			"opps": []
 		}
 
@@ -4066,7 +4066,7 @@ func _continue_lineage_as_descendant(
 		return {
 			"success": false,
 			"type": "afterlife_continue_lineage_unavailable",
-			"text": "The lineage continuation contract is unavailable.",
+			"text": "You can't continue your lineage right now.",
 			"opps": []
 		}
 

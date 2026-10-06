@@ -711,8 +711,8 @@ func build_current_panel_result() -> Dictionary:
 		opps.append({
 			"choice_id": "open_adventure_catalog",
 			"label": "Return to the library",
-			"text": "This story node has no available action contracts.",
-			"overview": "The panel stays recoverable instead of trapping you in a dead node.",
+			"text": "There's nothing more to do in this part of the story.",
+			"overview": "You can always head back to the library from here.",
 			"display_kind": "action_card",
 			"accent": accent,
 			"emoji": "↩"

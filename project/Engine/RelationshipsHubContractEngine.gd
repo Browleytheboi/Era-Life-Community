@@ -792,8 +792,8 @@ func emit_hub_contract(
 				"groups": groups,
 				"climate": climate.duplicate(false),
 				"status_text": (
-					"Relationship reality is live. "
-					+ "Tabs reveal resident projections."
+					"Your relationships are up to date. "
+					+ "Switch tabs to see more."
 				),
 				"truth_state": "hot",
 				"projection_complete": true,
@@ -862,7 +862,7 @@ func emit_hub_contract(
 				"groups": [],
 				"climate": climate.duplicate(false),
 				"status_text": (
-					"Relationship reality is observable."
+					"Your relationships are ready to view."
 				),
 				"truth_state": "hot",
 				"projection_complete": true,
@@ -1155,7 +1155,7 @@ func _resident_relationship_group_quantum(
 							),
 							true
 						),
-						"No grandparents are currently observable.",
+						"No grandparents to show right now.",
 						{
 							"premium": true,
 							"columns": 2,
@@ -1174,7 +1174,7 @@ func _resident_relationship_group_quantum(
 							),
 							true
 						),
-						"No great-grandparents are currently observable.",
+						"No great-grandparents to show right now.",
 						{
 							"section_key": "ancestors"
 						},
@@ -1201,7 +1201,7 @@ func _resident_relationship_group_quantum(
 							),
 							true
 						),
-						"No household members are observable.",
+						"No household members to show right now.",
 						{
 							"premium": true,
 							"columns": 2,
@@ -2152,7 +2152,7 @@ func _step_resident_hub_projection(
 			"groups": [],
 			"climate": climate.duplicate(false),
 			"status_text": (
-				"Relationship cards are entering the resident lens."
+				"Loading your relationships…"
 			),
 			"truth_state": "warming",
 			"projection_pending": true,
@@ -7340,7 +7340,7 @@ func _hub_group_contracts(
 						grandparents,
 						true
 					),
-					"No grandparents are currently observable.",
+					"No grandparents to show right now.",
 					{
 						"premium": true,
 						"columns": 2,
@@ -7357,7 +7357,7 @@ func _hub_group_contracts(
 						great_grandparents,
 						true
 					),
-					"No great-grandparents are currently observable.",
+					"No great-grandparents to show right now.",
 					{
 						"section_key": "ancestors"
 					},
@@ -7383,7 +7383,7 @@ func _hub_group_contracts(
 						),
 						true
 					),
-					"No household members are observable.",
+					"No household members to show right now.",
 					{
 						"premium": true,
 						"columns": 2,
@@ -13176,9 +13176,9 @@ func _household_status_lines(actor: Person) -> Array:
 	)
 
 	return [
-		"Household perspective: %s" % _actor_display_name(actor),
-		"Observable members: %d" % member_ids.size(),
-		"This section is a relationship projection. Household mutations remain contract-owned."
+		"Household: %s" % _actor_display_name(actor),
+		"Members: %d" % member_ids.size(),
+		"This is a quick summary. Make household changes from the Household tab."
 	]
 
 
@@ -13489,7 +13489,7 @@ func _resident_person_hydration_may_still_publish() -> bool:
 	):
 		return false
 
-	return (
+	var still_pending: bool = (
 		bool(
 			gs.scenario_state.get(
 				"checkpoint_payload_hydration_tail_pending",
@@ -13503,6 +13503,41 @@ func _resident_person_hydration_may_still_publish() -> bool:
 			)
 		)
 	)
+
+	if not still_pending:
+		gs.scenario_state [
+			"resident_person_hydration_wait_started_at_ms"
+		] = 0
+		return false
+
+	# FIX: for a resumed/lightweight session, some relationship targets (an NPC
+	# the checkpoint save never carried, e.g. a randomly-assigned prison guard)
+	# can never actually resolve -- population_lifecycle_manager's reconstruction
+	# needs lineage-ledger data this save format doesn't persist. These two flags
+	# were meant as a short "hydration still catching up, wait a beat" signal, but
+	# if they never get cleared for an unresolvable target, this returns true
+	# forever, which stalls the relationships build permanently and hard-locks
+	# whatever's waiting on it (confirmed: this is what stole all 600 passes of
+	# the age-up pump at prison release). Bound the wait instead of trusting the
+	# flag alone -- give real hydration a fair window, then stop waiting and let
+	# the card render as unresolved rather than never rendering at all.
+	var first_seen_ms: int = int(
+		gs.scenario_state.get(
+			"resident_person_hydration_wait_started_at_ms",
+			0
+		)
+	)
+	var now_ms: int = int(
+		Time.get_ticks_msec()
+	)
+
+	if first_seen_ms <= 0:
+		gs.scenario_state [
+			"resident_person_hydration_wait_started_at_ms"
+		] = now_ms
+		return true
+
+	return (now_ms - first_seen_ms) < 8000
 func _filter_person_ids_by_alive(
 	ids: Array,
 	alive_required: bool
@@ -14323,6 +14358,29 @@ func _casual_romance_person_ids(
 			.relationships_for_entity(
 				actor_entity_id
 			)
+		)
+
+		# DIAGNOSTIC: shows exactly what the graph returns for this actor and
+		# whether each edge is being recognized as a casual-romance/fling type.
+		var raw_edge_summaries: Array = []
+		for raw_edge_dump in edges:
+			var dump_types: Dictionary = _shallow_dictionary(
+				raw_edge_dump.get("relationship_types", {})
+			)
+			raw_edge_summaries.append(
+				"%s<->%s:%s" % [
+					str(raw_edge_dump.get("entity_a", "")),
+					str(raw_edge_dump.get("entity_b", "")),
+					str(dump_types.keys())
+				]
+			)
+		EraLog.truth(
+			"ERALIFE_CASUAL_ROMANCE_LOOKUP|actor_entity_id=%s|edge_count=%d|edges=%s"
+			% [
+				actor_entity_id,
+				edges.size(),
+				str(raw_edge_summaries)
+			]
 		)
 
 		for raw_edge in edges:

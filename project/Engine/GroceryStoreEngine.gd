@@ -5180,7 +5180,7 @@ func tick_self_checkout_lane_for_actor(
 	):
 		return {
 			"success": false,
-			"reason": "Self-checkout is resident but not active."
+			"reason": "That self-checkout isn't active right now."
 		}
 
 	var store_id: String = str(

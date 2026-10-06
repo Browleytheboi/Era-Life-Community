@@ -2443,11 +2443,11 @@ func _sync_bundle_window_chrome_from_contract() -> void:
 	if window_state_label != null:
 		window_state_label.visible = true
 		window_state_label.text = (
-			"REALITY LIVE • CONTRACTED • HOT-SWAPPABLE"
+			"REALITY ACTIVE • READY TO SWITCH BACK ANYTIME"
 			if bundle_enabled
 			else (
-				"REALITY DORMANT • STATE PRESERVED "
-				+ "• READY TO REATTACH"
+				"REALITY DORMANT • PROGRESS SAVED "
+				+ "• READY TO RECONNECT"
 			)
 		)
 
@@ -2505,7 +2505,7 @@ func _on_bundle_reality_toggle_toggled(
 
 	if bundle_id == "":
 		set_status(
-			"Reality bundle identity is unavailable."
+			"Couldn't identify that reality bundle."
 		)
 		return
 
@@ -3545,8 +3545,8 @@ func _empty_section_text_for(
 	match clean_section:
 		"bundles":
 			return (
-				"No installable reality bundles are "
-				+ "currently observable."
+				"No reality bundles are available "
+				+ "to install right now."
 			)
 
 		"installed":
@@ -3556,7 +3556,7 @@ func _empty_section_text_for(
 
 		"marketplace":
 			return (
-				"No marketplace listings are currently observable."
+				"No marketplace listings are available right now."
 			)
 
 		"systems":
@@ -3566,7 +3566,7 @@ func _empty_section_text_for(
 
 		"conflicts":
 			return (
-				"No provider conflicts are currently blocking reality."
+				"Nothing is conflicting with your installed mods right now."
 			)
 
 		"settings":
@@ -3577,8 +3577,8 @@ func _empty_section_text_for(
 
 		"overview":
 			return (
-				"This reality bundle has not exposed "
-				+ "an overview contract yet."
+				"This reality bundle doesn't have "
+				+ "an overview yet."
 			)
 
 		"components":
@@ -3589,30 +3589,30 @@ func _empty_section_text_for(
 
 		"roles":
 			return (
-				"No roles are currently observable "
-				+ "for this reality."
+				"No roles are available "
+				+ "for this reality yet."
 			)
 
 		"survival":
 			return (
-				"No survival-status contracts are "
-				+ "currently observable."
+				"No survival status info is "
+				+ "available right now."
 			)
 
 		"resources":
 			return (
-				"No resource contracts are currently observable."
+				"No resource info is available right now."
 			)
 
 		"tribe":
 			return (
-				"No tribe contracts are currently observable."
+				"No tribe info is available right now."
 			)
 
 		_:
 			return (
-				"No contracts are currently observable "
-				+ "for this section."
+				"Nothing is available "
+				+ "for this section right now."
 			)
 
 

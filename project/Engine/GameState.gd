@@ -4397,6 +4397,34 @@ func resident_blocking_birth_lane_active() -> bool:
 			)
 		)
 	)
+const RESIDENT_AMBIENT_POPULATION_TARGET := 400
+const RESIDENT_AMBIENT_POPULATION_PER_QUANTUM := 20
+
+# FIX: this is the actual, confirmed-live step of the
+# resident_runtime_bootstrap_plan every God Mode new life runs through
+# (apply_reality_settings -> spawn_shell_population -> create_player_identity
+# -> apply_birth_contracts -> seal_resident_reality). It only ever seeded
+# birth_shell_npc_count NPCs (0 for the God Mode prewarm path specifically),
+# and apply_birth_contracts only adds the player's own family on top -- so
+# every new life ended up with nothing but a family tree and zero unrelated
+# strangers in the world, confirmed via ERALIFE_ADOPT_GS_NPC_COUNT showing
+# npc_count=19 (player + full extended family, nothing else) and a
+# crime-pipeline candidate scan showing zero non-family targets. Two earlier
+# fixes this session (in GameState.gd:initialize() and
+# _initialize_birth_shell_first_life()) never fired because neither of those
+# functions is actually in this call chain at all.
+#
+# The real ambient population (with full family lineage per NPC, same as
+# everyone else -- Brandon wants strangers to have real families too, since
+# the player can marry into one) is seeded here in bounded quanta rather than
+# one big blocking loop, using this same function's own "complete: false"
+# return -- the resident_runtime_bootstrap_plan runner (~line 1187) already
+# knows how to re-call an incomplete step on a later service tick instead of
+# stalling the frame, the same cooperative pattern this codebase already uses
+# for the age-up projection pump and Bending Hub's prewarm quantum. This is
+# what makes the existing prewarm progress bar move smoothly through this
+# step instead of freezing while ~400 people (each with recursive relatives)
+# get built in one shot.
 func _resident_spawn_shell_population() -> Dictionary:
 	if npc_factory == null:
 		return {
@@ -4404,34 +4432,41 @@ func _resident_spawn_shell_population() -> Dictionary:
 			"reason": "resident_npc_factory_missing"
 		}
 
-	if npcs.is_empty():
-		var shell_npc_count: int = int(
-			scenario_state.get(
-				"birth_shell_npc_count",
-				4
-			)
-		)
-		shell_npc_count = clampi(
-			shell_npc_count,
-			0,
-			24
-		)
+	if not bool(scenario_state.get("resident_shell_initial_seed_done", false)):
+		var shell_npc_count: int = int(scenario_state.get("birth_shell_npc_count", 4))
+		shell_npc_count = clampi(shell_npc_count, 0, 24)
+		for _index in range(shell_npc_count):
+			var npc = npc_factory.create_random_npc(true)
+			apply_reality_rules_to_person(npc)
+			npcs.append(npc)
 
-		for _index in range(
-			shell_npc_count
-		):
-			var npc = npc_factory.create_random_npc(
-				true
-			)
-			apply_reality_rules_to_person(
-				npc
-			)
-			npcs.append(
-				npc
-			)
+		if realm_engine != null:
+			realm_engine.bootstrap_realms_for_era()
+
+		scenario_state["resident_shell_initial_seed_done"] = true
+		scenario_state["resident_ambient_population_spawned"] = 0
+
+	var spawned: int = int(scenario_state.get("resident_ambient_population_spawned", 0))
+	if spawned < RESIDENT_AMBIENT_POPULATION_TARGET:
+		var batch_size: int = mini(
+			RESIDENT_AMBIENT_POPULATION_PER_QUANTUM,
+			RESIDENT_AMBIENT_POPULATION_TARGET - spawned
+		)
+		for _index in range(batch_size):
+			var ambient_npc = npc_factory.create_random_npc(true)
+			apply_reality_rules_to_person(ambient_npc)
+			npcs.append(ambient_npc)
+		spawned += batch_size
+		scenario_state["resident_ambient_population_spawned"] = spawned
+
+	var is_complete: bool = spawned >= RESIDENT_AMBIENT_POPULATION_TARGET
+	if is_complete:
+		EraLog.truth("ERALIFE_RESIDENT_SHELL_SPAWN_NPC_COUNT|after_seed=%d" % npcs.size())
 
 	return {
 		"success": true,
+		"complete": is_complete,
+		"progress": float(spawned) / float(RESIDENT_AMBIENT_POPULATION_TARGET),
 		"shell_population_count": npcs.size()
 	}
 
@@ -6083,8 +6118,13 @@ func initialize():
 
 
 	if bool(scenario_state.get("birth_shell_first_boot", false)):
+		# DIAGNOSTIC: confirms which initialize() branch a new life actually
+		# takes -- birth-shell fast-boot vs the plain path -- since the two
+		# paths seed population completely differently.
+		EraLog.truth("ERALIFE_INIT_BRANCH|branch=birth_shell")
 		_initialize_birth_shell_first_life()
 		return
+	EraLog.truth("ERALIFE_INIT_BRANCH|branch=plain_initialize")
 
 	if game_state_contract_engine == null:
 		game_state_contract_engine = GameStateContractEngine.new(self)
@@ -7389,7 +7429,7 @@ func initialize():
 
 	realm_engine.bootstrap_realms_for_era()
 
-	for i in range(50):
+	for i in range(400):
 		var npc = npc_factory.create_random_npc(true)
 		apply_reality_rules_to_person(npc)
 		npcs.append(npc)
@@ -7914,8 +7954,20 @@ func _initialize_birth_shell_first_life() -> void:
 	else:
 		era = era_engine._era_from_year(year)
 
+	# FIX: this used to just set a "birth_shell_realm_bootstrap_deferred" flag
+	# and a tiny shell_npc_count (default 4, 0 for the God Mode prewarm path
+	# specifically) placeholder population, promising the real world
+	# population would get built later via a "static world bootstrap" pass.
+	# That deferred pass never actually exists anywhere in the project --
+	# static_world_runtime_bootstrapped is set to false in half a dozen
+	# places and never once set true -- so every life created through this
+	# (the only live) boot path was permanently stuck with whatever tiny
+	# handful of NPCs happened to get created on-demand by other systems.
+	# Bootstrap the real world population here instead, since this is the
+	# only boot path that actually runs.
 	if realm_engine != null:
-		scenario_state ["birth_shell_realm_bootstrap_deferred"] = true
+		realm_engine.bootstrap_realms_for_era()
+		scenario_state ["birth_shell_realm_bootstrap_deferred"] = false
 
 	var shell_npc_count: int = int(scenario_state.get("birth_shell_npc_count", 4))
 	shell_npc_count = clamp(shell_npc_count, 0, 24)
@@ -7923,6 +7975,18 @@ func _initialize_birth_shell_first_life() -> void:
 		var npc = npc_factory.create_random_npc(true)
 		apply_reality_rules_to_person(npc)
 		npcs.append(npc)
+
+	for i in range(400):
+		var ambient_npc = npc_factory.create_random_npc(true)
+		apply_reality_rules_to_person(ambient_npc)
+		npcs.append(ambient_npc)
+
+	# DIAGNOSTIC: ground truth on how many NPCs actually exist on THIS
+	# GameState object right after the ambient-population fix above runs,
+	# before player creation/lineage. Compare against ERALIFE_ADOPT_GS_NPC_COUNT
+	# and the eventual ERALIFE_DATE_CANDIDATES total_npcs to find exactly where
+	# (if anywhere) the count changes between seeding and actual play.
+	EraLog.truth("ERALIFE_BIRTH_SHELL_NPC_COUNT|after_seed_loop=%d" % npcs.size())
 
 	if custom_mode:
 		player = character_creator.create_custom_player(custom_settings)
@@ -13026,6 +13090,17 @@ func queue_year_resolution_popup(entry: Dictionary) -> void:
 		popup_entry ["popup_footer"] = "Tap anywhere to continue."
 	pending_year_resolution_popups.append(popup_entry)
 
+	# DIAGNOSTIC: confirms an engine actually queued a popup, and shows the
+	# queue depth right after -- pairs with ERALIFE_YEAR_POPUP_DRAIN below.
+	EraLog.truth(
+		"ERALIFE_YEAR_POPUP_QUEUED|title=%s|text=%s|queue_depth=%d"
+		% [
+			str(popup_entry.get("popup_title", "")),
+			popup_text,
+			pending_year_resolution_popups.size()
+		]
+	)
+
 func pop_next_year_resolution_popup() -> Dictionary:
 	if pending_year_resolution_popups.is_empty():
 		return {}
@@ -15171,6 +15246,15 @@ func _collect_resume_engine_registry() -> Dictionary:
 	if heirloom_engine != null and typeof(heirloom_engine.heirlooms) == TYPE_DICTIONARY:
 		registry ["heirlooms"] = heirloom_engine.heirlooms.duplicate(true)
 
+	if jail_engine != null:
+		registry ["jail_engine_state"] = jail_engine.export_state()
+
+	if prison_engine != null:
+		registry ["prison_engine_state"] = prison_engine.export_state()
+
+	if case_orchestrator != null:
+		registry ["case_orchestrator_state"] = case_orchestrator.export_state()
+
 	EraLog.truth(
 		"ERALIFE_RESUME_REGISTRY_SAVED|keys=%d|vehicles=%s|belongings=%s"
 		% [
@@ -15416,6 +15500,19 @@ func commit_current_life_checkpoint_contract(
 		actor_snapshot = _serialize_npc(
 			player
 		)
+
+	# DIAGNOSTIC: resume comes back with bank_balance=0. Report what the live
+	# player actually holds at the exact moment this checkpoint contract is built,
+	# to tell whether the money is already gone before the save happens.
+	EraLog.truth(
+		"ERALIFE_CHECKPOINT_COMMIT_MONEY|player_null=%s|live_bank_balance=%s|snapshot_has_bank=%s|snapshot_bank=%s"
+		% [
+			str(player == null),
+			str(player.bank_balance) if player != null else "N/A",
+			str(actor_snapshot.has("bank_balance")),
+			str(actor_snapshot.get("bank_balance", "MISSING"))
+		]
+	)
 
 	var checkpoint_resume_contract: Dictionary = {
 		"schema": (

@@ -1106,8 +1106,8 @@ func purchase_weapon_from_contract(
 	).strip_edges().to_lower() != "weapon_shop":
 		return {
 			"success": false,
-			"popup_title": "Wrong Contract",
-			"popup_text": "That contract is not a weapon shop.",
+			"popup_title": "Wrong Place",
+			"popup_text": "This isn't a weapon shop.",
 			"popup_footer": "Tap anywhere to continue."
 		}
 
@@ -1378,7 +1378,7 @@ func resolve_weapon_shop_purchase_intent(
 			"success": false,
 			"reason": "missing_actor",
 			"popup_title": "Rick's Weapon Shop",
-			"popup_text": "No purchasing actor was supplied.",
+			"popup_text": "No buyer was specified.",
 			"popup_footer": "Tap anywhere to continue."
 		}
 
@@ -2644,7 +2644,7 @@ func _observation_row_for_contract(contract: Dictionary, _observer: Person, _fil
 			"state": str(contract.get("state", "active")),
 			"space_type": "culture",
 			"space_id": str(culture.get("id", "")),
-			"title": str(culture.get("display_name", "Cultural Reality")),
+			"title": str(culture.get("display_name", "This Culture")),
 			"subtitle": "%s • %s • Drift %s" % [
 				str(reality_layer.get("era", _current_era_name())),
 				str(culture.get("power_structure", "civic state")),
@@ -2693,8 +2693,8 @@ func _observation_row_for_contract(contract: Dictionary, _observer: Person, _fil
 		"state": str(contract.get("state", "active")),
 		"space_type": str(public_space.get("space_type", "")),
 		"space_id": str(public_space.get("space_id", "")),
-		"title": str(_safe_dictionary(contract.get("location", {})).get("name", contract.get("contract_id", "Runtime Contract"))),
-		"subtitle": "%s • %s" % [str(movie.get("title", "Live reality")), str(lifecycle.get("phase", "active"))],
+		"title": str(_safe_dictionary(contract.get("location", {})).get("name", contract.get("contract_id", "Unknown Location"))),
+		"subtitle": "%s • %s" % [str(movie.get("title", "Now Playing")), str(lifecycle.get("phase", "active"))],
 		"population": _population_from_zones(zones),
 		"zone_counts": _zone_counts(zones),
 		"active_friction_events": _safe_array(contract.get("active_friction_events", []))

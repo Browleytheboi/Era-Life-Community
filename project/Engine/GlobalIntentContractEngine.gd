@@ -645,6 +645,19 @@ func _resolve_target_engine_for_route(
 		clean_engine_property
 	)
 
+	if clean_engine_property == "life_engine":
+		# DIAGNOSTIC: age-up intent routing reports target_engine_unavailable for
+		# life_engine specifically while the player is incarcerated. Report which
+		# gs instance this route is actually checking, and whether life_engine is
+		# null on it, to tell apart "never constructed" from "wrong gs entirely."
+		EraLog.truth(
+			"ERALIFE_ROUTE_LIFE_ENGINE_LOOKUP|gs_instance_id=%d|life_engine_null=%s"
+			% [
+				gs.get_instance_id(),
+				str(engine == null)
+			]
+		)
+
 	if engine != null:
 		return engine
 

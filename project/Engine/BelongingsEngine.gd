@@ -2637,7 +2637,7 @@ func resolve_belongings_item_action(actor_or_payload = {}, maybe_payload: Dictio
 		return { "success": false, "text": "Belongings action payload must be a Dictionary."}
 
 	if gs == null or actor == null:
-		return { "success": false, "text": "No active actor could resolve that item action."}
+		return { "success": false, "text": "No one is available to use that item right now."}
 
 	var action: String = str(payload.get("action", payload.get("action_id", ""))).strip_edges().to_lower()
 	var source_item: Dictionary = _safe_dictionary(payload.get("source_item", {}))
@@ -2699,9 +2699,9 @@ func resolve_belongings_item_action(actor_or_payload = {}, maybe_payload: Dictio
 				"crown_hub_section": "throne",
 				"crown_hub_layout_variant": "federal_republic",
 				"popup_title": "White House Access",
-				"popup_text": "You access the Federal Republic command surface through The White House residence contract.",
+				"popup_text": "You access the Federal Republic's command center through your right to the White House residence.",
 				"popup_footer": "Opening Federal Republic Crown Hub.",
-				"text": "I accessed The White House federal office surface.",
+				"text": "I accessed The White House federal offices.",
 				"log_to_diary": false,
 				"force_immediate_popup": true,
 				"source_item": source_item.duplicate(true)
@@ -2858,10 +2858,10 @@ func _format_official_residence_number(value: int) -> String:
 
 func record_item_use_by_contract(actor: Person, contract_id: String, category: String = "", context: Dictionary = {}) -> Dictionary:
 	if actor == null:
-		return { "success": false, "text": "A valid actor is required."}
+		return { "success": false, "text": "You need to choose someone first."}
 	var clean_contract_id: String = str(contract_id).strip_edges()
 	if clean_contract_id == "":
-		return { "success": false, "text": "A valid item contract id is required."}
+		return { "success": false, "text": "A valid item is required."}
 
 	var inventory: Dictionary = get_inventory(actor)
 	for raw_category in inventory.keys():
@@ -2887,17 +2887,17 @@ func record_item_use_by_contract(actor: Person, contract_id: String, category: S
 				"item_id": int(item.get("id", -1)),
 				"item_name": str(item.get("display_name", item.get("name", "item"))),
 				"category": clean_category,
-				"text": "%s answered reality through %s." % [_person_label(actor), str(item.get("display_name", item.get("name", "an item")))]
+				"text": "%s put %s to use." % [_person_label(actor), str(item.get("display_name", item.get("name", "an item")))]
 			}
 
 	return {
 		"success": false,
-		"text": "%s does not currently hold an item with contract %s." % [_person_label(actor), clean_contract_id]
+		"text": "%s doesn't currently own that item (%s)." % [_person_label(actor), clean_contract_id]
 	}
 
 func grow_bond_with_item(actor: Person, category: String, item_id: int, context: Dictionary = {}) -> Dictionary:
 	if actor == null:
-		return { "success": false, "text": "A valid actor is required."}
+		return { "success": false, "text": "You need to choose someone first."}
 	if item_id <= 0:
 		return { "success": false, "text": "A valid item id is required."}
 
@@ -3028,11 +3028,11 @@ func get_item_relationship_profile(item: Dictionary) -> Dictionary:
 
 func record_item_relationship(actor: Person, source_query: Dictionary, target_query: Dictionary, relationship_type: String, context: Dictionary = {}) -> Dictionary:
 	if actor == null:
-		return { "success": false, "text": "A valid actor is required."}
+		return { "success": false, "text": "You need to choose someone first."}
 
 	var policy: Dictionary = _item_relationship_policy()
 	if not bool(policy.get("enabled", true)):
-		return { "success": false, "text": "Item relationships are disabled by contract."}
+		return { "success": false, "text": "Item relationships are turned off."}
 
 	var source_item: Dictionary = _find_first_item_entry_for_actor(actor, source_query)
 	if source_item.is_empty():

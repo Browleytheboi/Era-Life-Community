@@ -208,7 +208,7 @@ func _asset_actions(p: Person) -> Array:
 		if int(property_rollup.get("asset_count", 0)) > 0:
 			_push_unique(out, seen, {
 				"id": "portfolio_assets_property_surface",
-				"text": "Open Estate Asset Surface",
+				"text": "Manage Property Portfolio",
 				"engine": "action_discovery_engine",
 				"method": "manage_property_portfolio",
 				"args": [p]
@@ -220,7 +220,7 @@ func _asset_actions(p: Person) -> Array:
 		if int(vehicle_rollup.get("asset_count", 0)) > 0:
 			_push_unique(out, seen, {
 				"id": "portfolio_assets_vehicle_surface",
-				"text": "Open Mobility Asset Surface",
+				"text": "Manage Vehicle Portfolio",
 				"engine": "action_discovery_engine",
 				"method": "manage_vehicle_portfolio",
 				"args": [p]

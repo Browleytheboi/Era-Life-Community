@@ -545,8 +545,8 @@ func register_surface_shell(
 
 	var status_label:= Label.new()
 	status_label.text = (
-		"Population truth is resident and streaming. "
-		+ "Cards will appear continuously."
+		"Loading population data. "
+		+ "Cards will appear as they're found."
 	)
 	status_label.autowrap_mode = (
 		TextServer.AUTOWRAP_WORD_SMART

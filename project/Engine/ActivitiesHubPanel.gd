@@ -712,11 +712,11 @@ func _render_identity(
 			)
 		},
 		{
-			"label": "SURFACE",
+			"label": "STATUS",
 			"value": str(
 				active_contract.get(
 					"truth_state",
-					"observable"
+					"Active"
 				)
 			)
 		}
@@ -908,7 +908,7 @@ func _on_section_pressed(
 func prepare_observable_actor_shell(
 	actor_id: int,
 	message: String = (
-		"Activities truth is publishing live."
+		"Loading your activities..."
 	)
 ) -> void:
 	_ensure_surface()

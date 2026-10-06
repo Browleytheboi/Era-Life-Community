@@ -103,6 +103,21 @@ func emit_popup_contract(raw_contract: Dictionary, context: Dictionary = {}) -> 
 		"target_id": int(contract.get("target_id", contract.get("target", -1)))
 	})
 
+	# DIAGNOSTIC: this is the general choke point every non-crime pending
+	# situation funnels through (romance, sibling defense, random life
+	# events, etc). If nothing logs here for the rest of a long stretch of
+	# play, nothing is even attempting to generate a new situation -- the
+	# problem is upstream of this engine, not in how it's displayed.
+	EraLog.truth(
+		"ERALIFE_SCENARIO_POPUP_EMITTED|contract_id=%s|source=%s|category=%s|target_id=%d"
+		% [
+			contract_id,
+			str(context.get("source", "emit_popup_contract")),
+			str(contract.get("category", "general")),
+			int(contract.get("target_id", contract.get("target", -1)))
+		]
+	)
+
 	if gs == null or gs.scenario_runtime_contract_engine == null:
 		_commit_engine_state()
 		return {

@@ -339,7 +339,7 @@ func get_menu_rows(context: Dictionary = {}) -> Array:
 		else:
 			out.append({
 				"label": "Restaurant not found",
-				"description": "The selected restaurant contract could not be resolved.",
+				"description": "That restaurant couldn't be found.",
 				"kind": "restaurant_missing"
 			})
 		return out
@@ -1429,25 +1429,127 @@ func resolve_date_action(actor: Person, action_id: String, _context: Dictionary 
 			text = "%s said yes. The night left the restaurant behind and became something much more private." % str(partner.first_name)
 			state ["date_finished"] = true
 			state ["last_date_response"] = text
-			restaurant_date_state_by_actor_id [str(int(actor.id))] = state
 			_record_restaurant_life_diary(actor, "I asked %s to hook up after our restaurant date, and they said yes. We left together, and the night became more than dinner." % str(partner.first_name))
+
+			# FIX: an earlier version of this fix just marked the bill ready
+			# and left the player on the cart tab to press "Pay Bill and End
+			# Date" themselves -- doesn't make sense: you already left to hook
+			# up, there's no reason the game should wait for a second click to
+			# settle a bill you're not still sitting at. Auto-pay and close out
+			# the whole visit here, mirroring resolve_waiter_action()'s
+			# "pay_bill" branch directly (payment, ledger entry, session
+			# clear, close). Deliberately does NOT call
+			# resolve_date_action(actor, "end", ...) the way that branch
+			# normally would -- "end" re-runs _create_restaurant_fling() and
+			# re-applies the relationship bump, which would double the bond
+			# delta on top of what hook_up already applied above.
+			var hookup_actor_key: String = str(int(actor.id))
+			var hookup_restaurant_id: String = str(state.get("restaurant_id", "")).strip_edges()
+			var hookup_restaurant: Dictionary = get_restaurant(hookup_restaurant_id)
+			var hookup_bill_total: float = float(state.get("bill_total", 0.0))
+			var hookup_custom_tip: float = float(state.get("restaurant_custom_tip", state.get("custom_tip", 0.0)))
+
+			if hookup_bill_total <= 0.0:
+				var hookup_bill_snapshot: Dictionary = state.get("bill_snapshot", {}) if typeof(state.get("bill_snapshot", {})) == TYPE_DICTIONARY else {}
+				if not hookup_bill_snapshot.is_empty():
+					hookup_bill_total = _restaurant_cart_total(hookup_bill_snapshot)
+
+			var hookup_total_due: float = max(0.0, hookup_bill_total + hookup_custom_tip)
+			var hookup_pay_report: Dictionary = {
+				"success": true,
+				"paid": 0.0,
+				"reason": "No bill was due."
+			}
+
+			if hookup_total_due > 0.0:
+				hookup_pay_report = gs.food_engine._pay_for_food(actor, hookup_total_due, {
+					"source": "restaurant_hook_up",
+					"restaurant_id": hookup_restaurant_id,
+					"bill_total": hookup_bill_total,
+					"tip": hookup_custom_tip,
+					"context": _context.duplicate(true)
+				})
+
+			if not bool(hookup_pay_report.get("success", false)):
+				state ["waiter_called"] = true
+				state ["restaurant_bill_requested"] = true
+				state ["restaurant_bill_stage"] = "ready_to_pay"
+				state ["bill_requested"] = true
+				state ["bill_stage"] = "ready_to_pay"
+				restaurant_date_state_by_actor_id [hookup_actor_key] = state
+				return {
+					"success": false,
+					"date_finished": true,
+					"hook_up": true,
+					"waiter_called": true,
+					"bill_requested": true,
+					"bill_stage": "ready_to_pay",
+					"target_section": "cart",
+					"active_section_id": "cart",
+					"payment_report": hookup_pay_report.duplicate(true),
+					"show_popup": true,
+					"popup_title": "A Bold Ask",
+					"popup_text": ask_text,
+					"popup_footer": "Tap anywhere to continue.",
+					"followup_result": {
+						"popup_title": "Couldn't Settle the Bill",
+						"popup_text": str(hookup_pay_report.get("reason", "I could not pay the restaurant bill.")),
+						"popup_footer": "Tap anywhere to continue."
+					},
+					"text": str(hookup_pay_report.get("reason", "I could not pay the restaurant bill."))
+				}
+
+			var hookup_restaurant_name: String = str(hookup_restaurant.get("name", "the restaurant")) if not hookup_restaurant.is_empty() else "the restaurant"
+			var hookup_paid_text: String = "I paid $%.2f at %s on the way out." % [hookup_total_due, hookup_restaurant_name]
+			var hookup_final_text: String = "%s\n\n%s" % [text, hookup_paid_text]
+
+			state ["bill_paid"] = true
+			state ["last_date_response"] = hookup_final_text
+			state ["updated_at_ms"] = int(Time.get_ticks_msec())
+			restaurant_date_state_by_actor_id [hookup_actor_key] = state
+
+			visit_ledger.append({
+				"restaurant_id": hookup_restaurant_id,
+				"actor_id": int(actor.id),
+				"partner_id": int(partner.id),
+				"service_mode": "dine_in",
+				"bill_total": hookup_bill_total,
+				"tip": hookup_custom_tip,
+				"total_paid": hookup_total_due,
+				"payment_report": hookup_pay_report.duplicate(true),
+				"hook_up": true,
+				"year": int(gs.year) if gs != null else 0,
+				"at_ms": int(Time.get_ticks_msec())
+			})
+
+			restaurant_carts_by_actor_id.erase(hookup_actor_key)
+			restaurant_date_state_by_actor_id.erase(hookup_actor_key)
+
 			return {
 				"success": true,
 				"date_finished": true,
 				"hook_up": true,
 				"partner_id": int(partner.id),
+				"waiter_called": true,
+				"bill_requested": true,
+				"bill_stage": "paid",
+				"bill_paid": true,
+				"total_paid": hookup_total_due,
+				"payment_report": hookup_pay_report.duplicate(true),
+				"target_section": "cart",
+				"active_section_id": "cart",
 				"show_popup": true,
 				"popup_title": "A Bold Ask",
 				"popup_text": ask_text,
 				"popup_footer": "Tap anywhere to continue.",
 				"followup_result": {
 					"popup_title": "The Night Continued",
-					"popup_text": text,
+					"popup_text": hookup_final_text,
 					"popup_footer": "Tap anywhere to continue."
 				},
 				"close_contract_surface": true,
 				"close_after": true,
-				"text": text
+				"text": hookup_final_text
 			}
 		"end":
 			if score >= 58:
@@ -2765,10 +2867,16 @@ func _date_candidates_for_actor(actor: Person) -> Array:
 	if actor == null or gs == null:
 		return out
 
+	var total_npcs: int = gs.npcs.size()
+	var alive_count: int = 0
+	var age_passed_count: int = 0
+	var gender_passed_count: int = 0
+
 	var actor_gender: String = str(actor.gender).strip_edges().to_lower()
 	for npc in gs.npcs:
 		if npc == null or not npc.alive:
 			continue
+		alive_count += 1
 
 		if int(npc.id) == int(actor.id):
 			continue
@@ -2778,14 +2886,88 @@ func _date_candidates_for_actor(actor: Person) -> Array:
 
 		if int(npc.age) > int(actor.age) + 8:
 			continue
+		age_passed_count += 1
 
 		var npc_gender: String = str(npc.gender).strip_edges().to_lower()
 		if actor_gender == "male" and npc_gender != "female":
 			continue
 		if actor_gender == "female" and npc_gender != "male":
 			continue
+		gender_passed_count += 1
 
 		out.append(npc)
+
+	# FIX: an empty/thin pool here isn't a broken filter -- it's that most of
+	# the world sits dormant as unmaterialized population shards, and this
+	# function only ever looked at gs.npcs, the already-materialized set.
+	# PopulationLifecycleManager.materialize_person_from_shard() exists
+	# specifically to pull a matching person out of that dormant pool on
+	# demand (same fix shape already flagged as needed for prison guard
+	# lookups) -- it was just never wired in here. Backfill from shards when
+	# the live pool is too thin to realistically find a date.
+	var materialized_count: int = 0
+	if out.size() < 3 and gs.population_lifecycle_manager != null:
+		# DIAGNOSTIC: pins whether the shard well is actually dry, or whether
+		# realms/shards exist but nothing matches the requested filters.
+		EraLog.truth(
+			"ERALIFE_SHARD_POOL_STATE|realm_engine_null=%s|realm_count=%d|shard_engine_null=%s|shard_count=%d"
+			% [
+				str(gs.realm_engine == null),
+				int(gs.realm_engine.realms.size()) if (gs.realm_engine != null and typeof(gs.realm_engine.realms) == TYPE_DICTIONARY) else -1,
+				str(gs.population_shard_engine == null),
+				int(gs.population_shard_engine.population_shards.size()) if (gs.population_shard_engine != null and typeof(gs.population_shard_engine.population_shards) == TYPE_DICTIONARY) else -1
+			]
+		)
+
+		var opposite_gender: String = "Female" if actor_gender == "male" else "Male"
+		var target_age: int = int(actor.age)
+		var age_band: String = "18_25"
+		if target_age <= 4:
+			age_band = "0_4"
+		elif target_age <= 12:
+			age_band = "5_12"
+		elif target_age <= 17:
+			age_band = "13_17"
+		elif target_age <= 25:
+			age_band = "18_25"
+		elif target_age <= 40:
+			age_band = "26_40"
+		elif target_age <= 60:
+			age_band = "41_60"
+		elif target_age <= 80:
+			age_band = "61_80"
+		else:
+			age_band = "81_plus"
+
+		var backfill_needed: int = 3 - out.size()
+		for _i in range(backfill_needed):
+			var materialized: Person = gs.population_lifecycle_manager.materialize_person_from_shard({
+				"gender": opposite_gender,
+				"age_band": age_band
+			})
+			if materialized == null:
+				break
+			materialized_count += 1
+			out.append(materialized)
+
+	# DIAGNOSTIC: pins whether an empty/thin date candidate pool is a real
+	# population problem (total_npcs low) or a filter problem (total_npcs
+	# healthy but something below knocks everyone out). materialized_count
+	# shows how many the shard-backfill fix above pulled in.
+	EraLog.truth(
+		"ERALIFE_DATE_CANDIDATES|actor_id=%d|actor_age=%d|actor_gender=%s|total_npcs=%d|alive=%d|age_passed=%d|gender_passed=%d|materialized=%d|final_candidates=%d"
+		% [
+			int(actor.id),
+			int(actor.age),
+			actor_gender,
+			total_npcs,
+			alive_count,
+			age_passed_count,
+			gender_passed_count,
+			materialized_count,
+			out.size()
+		]
+	)
 
 	return out
 
@@ -2898,6 +3080,90 @@ func _create_restaurant_fling(actor: Person, partner: Person) -> void:
 
 	if gs.relationship_engine != null:
 		gs.relationship_engine.adjust_relationship(actor, partner, 9)
+
+	# FIX: the Relationships panel's "Flings" tab reads relationship-graph edges
+	# tagged relationship_type "fling" (RelationshipsHubContractEngine.gd's
+	# _casual_romance_person_ids()) -- nothing anywhere in the project ever wrote
+	# that tag. adjust_relationship() above only bumps a plain affection number,
+	# it doesn't touch the graph. commit_relationship_event() is the existing,
+	# working API other systems use to tag real relationship types -- use it here
+	# so a restaurant fling actually shows up as one.
+	if (
+		gs.relationship_graph_contract_engine != null
+		and gs.relationship_graph_contract_engine.has_method("commit_relationship_event")
+	):
+		var fling_commit_report: Dictionary = gs.relationship_graph_contract_engine.commit_relationship_event({
+			"subject_entity_id": "human:%d" % int(actor.id),
+			"object_entity_id": "human:%d" % int(partner.id),
+			"relationship_type": "fling",
+			"bond_delta": 9,
+			"producer": "food_restaurant_engine"
+		})
+		# DIAGNOSTIC: confirms the commit actually succeeded and shows why if not.
+		EraLog.truth(
+			"ERALIFE_FLING_COMMIT|actor_id=%d|partner_id=%d|success=%s|reason=%s"
+			% [
+				int(actor.id),
+				int(partner.id),
+				str(fling_commit_report.get("success", false)),
+				str(fling_commit_report.get("reason", "-"))
+			]
+		)
+	else:
+		# DIAGNOSTIC: confirms the engine reference itself was the problem.
+		EraLog.truth(
+			"ERALIFE_FLING_COMMIT|actor_id=%d|partner_id=%d|success=false|reason=missing_relationship_graph_contract_engine"
+			% [
+				int(actor.id),
+				int(partner.id)
+			]
+		)
+
+	# FIX: the graph edge above is correct and confirmed readable by
+	# _casual_romance_person_ids() the moment it's queried -- but the
+	# Relationships panel (InstitutionHubPanelBase.gd) builds each section's
+	# surface once and only rebuilds it when something re-queues that section;
+	# switching tabs just toggles visibility of the already-built one
+	# (ERALIFE_SECTION_SURFACE_GATE confirms "skip" every time after the first
+	# build). Nothing ever told the Partner section it was stale, so a real
+	# fling sat in the graph forever while the panel kept showing "No active
+	# flings." queue_resident_relationship_section_refresh() is the existing,
+	# narrow API this project already uses to force one section to re-fetch
+	# live (see MainScene.gd's checkpoint-reattach pets-refresh fix) -- use it
+	# here instead of invalidate_cached_section_surfaces(), which is commented
+	# in MainScene.gd as having been tried for a similar bug and reverted for
+	# blanking the whole hub.
+	if (
+		gs.reality_projection_contract_engine != null
+		and gs.reality_projection_contract_engine.has_method("queue_resident_relationship_section_refresh")
+	):
+		# FIX: ERALIFE_SECTION_REFRESH_BAIL (added while diagnosing why this
+		# refresh never completed in live play) showed gs_player_null=true on
+		# every single attempt -- reality_projection_contract_engine is a real,
+		# stable engine instance, but its own internal `gs` reference was bound
+		# to a different, player-less GameState at some earlier boot stage and
+		# never re-bound to the live one, even though this function's own `gs`
+		# (the one actually holding the player) is correct. bind_game_state()
+		# exists specifically for this -- re-bind it to the live gs right
+		# before queueing so the pump resolves the actor correctly.
+		if gs.reality_projection_contract_engine.has_method("bind_game_state"):
+			gs.reality_projection_contract_engine.bind_game_state(gs)
+
+		var fling_refresh_report: Dictionary = gs.reality_projection_contract_engine.queue_resident_relationship_section_refresh(
+			int(actor.id),
+			["partner"],
+			{"source": "restaurant_fling_committed"}
+		)
+		# DIAGNOSTIC: confirms the refresh was actually queued and why if not.
+		EraLog.truth(
+			"ERALIFE_FLING_SECTION_REFRESH|actor_id=%d|partner_id=%d|success=%s|reason=%s"
+			% [
+				int(actor.id),
+				int(partner.id),
+				str(fling_refresh_report.get("success", false)),
+				str(fling_refresh_report.get("reason", "-"))
+			]
+		)
 
 
 func _restaurant_category(restaurant: Dictionary) -> String:

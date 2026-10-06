@@ -3700,22 +3700,22 @@ func _crime_empty_section_status(
 
 	match section_id:
 		"weapons":
-			return "No resident weapons are currently available."
+			return "You don't own any weapons."
 		"cases":
-			return "No active crime cases are attached to this actor."
+			return "You have no active crime cases."
 		"pending":
 			return (
-				"No pending criminal or legal pressure "
-				+ "is attached to this actor."
+				"You have no pending criminal or legal "
+				+ "pressure."
 			)
 		"custody", "prison":
-			return "No custody contract is active for this actor."
+			return "You're not currently in custody."
 		"targets":
-			return "No eligible resident crime targets are currently projected."
+			return "No eligible crime targets are available right now."
 		"crime_actions":
-			return "Resident crime actions are publishing live."
+			return "Loading available crime actions..."
 		_:
-			return "Controlled-actor Crime truth is publishing live."
+			return "Loading your crime record..."
 
 func _add_crime_section_status_label(
 	parent: Node,

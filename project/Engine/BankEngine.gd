@@ -150,7 +150,12 @@ func ensure_bank_account_for_actor(actor, context: Dictionary = {}) -> Dictionar
 	var currency: String = _resolve_currency(context)
 	return ensure_account(owner_id, world_id, ACCOUNT_KIND_BANK, currency, {
 		"actor_id": int(actor.id) if actor.get("id") != null else -1,
-		"transfer_scope": TRANSFER_SCOPE_LOCAL
+		"transfer_scope": TRANSFER_SCOPE_LOCAL,
+		# FIX: a first-time account was always created at 0.0, disconnected from
+		# the actor's real cash, and the very next sync-back overwrote actor.bank_balance
+		# with that phantom zero. Seed it with what the actor already holds so the
+		# account starts in agreement with the field it's about to mirror.
+		"starting_balance": float(actor.bank_balance) if actor.get("bank_balance") != null else 0.0
 	})
 
 func ensure_interworld_account_for_actor(actor, context: Dictionary = {}) -> Dictionary:

@@ -2651,11 +2651,11 @@ func _ui_packet_lines_from_data(surface_id: String, data: Dictionary, _context: 
 			for raw_line in diary_lines:
 				lines.append(str(raw_line))
 		_:
-			lines.append("This UI surface is ready.")
-			lines.append("Simulation truth may continue catching up behind the perceived UI packet.")
+			lines.append("This screen is ready.")
+			lines.append("Things may still be settling in behind the scenes.")
 
 	if lines.is_empty():
-		lines.append("This UI packet is stable and ready.")
+		lines.append("Everything here is up to date.")
 
 	return lines
 
@@ -5504,18 +5504,18 @@ func _ensure_core_surface_contracts() -> void:
 				"layout": "hub_sections",
 				"label": "EraLife",
 				"title": "EraLife Discord Hub",
-				"subtitle": "Your life is now controlled through Data Driven UI surfaces instead of slash command spam.",
-				"description": "Open a surface below. Discord is only the shell; EraLife contracts own the reality.",
+				"subtitle": "Your life is now controlled from here instead of slash commands.",
+				"description": "Pick a hub below to open it.",
 				"icon": "🌌",
 				"sort_priority": 1,
 				"persistent_state": true,
 				"sections": [
 				{
 				"id": "surfaces",
-				"label": "Surfaces",
+				"label": "Menu",
 				"is_default": true,
 				"data_source": "ui.embedded_surface_launcher",
-				"description": "Choose the next EraLife surface to open."
+				"description": "Choose where to go next."
 				}
 				]
 			},
@@ -5573,7 +5573,7 @@ func _ensure_core_surface_contracts() -> void:
 				"layout": "hub_sections",
 				"label": "Activities",
 				"title": "Activity Hub",
-				"subtitle": "Life actions, social choices, risky events, and scenario routes gathered into one Discord surface.",
+				"subtitle": "Life actions, social choices, risky events, and scenario routes gathered into one place.",
 				"icon": "🎲",
 				"sort_priority": 32,
 				"persistent_state": true,
@@ -5592,7 +5592,7 @@ func _ensure_core_surface_contracts() -> void:
 				"layout": "hub_sections",
 				"label": "Realms",
 				"title": "Realm Browser",
-				"subtitle": "Realm entries resolved from contract-backed realm surfaces.",
+				"subtitle": "Realm entries gathered from every realm you've unlocked.",
 				"icon": "🌐",
 				"sort_priority": 35,
 				"persistent_state": true,

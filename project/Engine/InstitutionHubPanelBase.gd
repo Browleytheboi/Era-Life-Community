@@ -182,7 +182,7 @@ func prepare_surface(kind: String = "institution") -> void:
 	surface_prepared = true
 	_apply_shell_theme()
 	_render_observable_partial(
-		"%s reality is resident. Its current projection is reconnecting." % panel_kind.capitalize()
+		"%s is loading. Reconnecting now." % panel_kind.capitalize()
 	)
 
 
@@ -282,10 +282,19 @@ func render_contract(
 
 
 
+	# FIX: this guard exists to stop a genuinely broken/empty payload from blanking
+	# a panel that already has real content -- but it can't tell "broken" apart
+	# from "a well-formed contract that is legitimately empty right now" (no
+	# cellmate assigned yet, no other resident inmates). For an incarceration
+	# surface specifically, a correctly-empty prison view is the truth and should
+	# replace stale pre-incarceration content, not lose to it.
 	if (
 		not incoming_has_renderable_rows
 		and has_renderable_contract(
 			active_actor_id
+		)
+		and not incoming_contract.has(
+			"incarceration_lens"
 		)
 	):
 		set_meta(
@@ -1009,7 +1018,7 @@ func _ensure_relationship_observation_section_surface(
 						"title",
 						row.get(
 							"label",
-							"Observable Relationship Truth"
+							"Relationships"
 						)
 					)
 				),
@@ -1019,14 +1028,14 @@ func _ensure_relationship_observation_section_surface(
 	if content_root.get_child_count() == 0:
 		_add_info_card_to(
 			content_root,
-			"Observable Relationship Truth",
+			"Relationships",
 			[
 				str(
 					section_contract.get(
 						"status_text",
 						(
-							"No relationships are currently "
-							+ "projected in this section."
+							"No relationships to show "
+							+ "in this section yet."
 						)
 					)
 				)
@@ -1327,6 +1336,20 @@ func _service_section_surface_contract_queue() -> void:
 			)
 
 			if queued_world_year != required_world_year:
+				# DIAGNOSTIC: "Inmates / Guards" never builds after a checkpoint resume
+				# no matter how long the player waits or how many times they revisit
+				# the tab -- section stays queued-then-dropped forever. Report the
+				# actual year mismatch each time this fires, to confirm/deny that this
+				# freshness gate is what's silently discarding the section every pass.
+				EraLog.truth(
+					"ERALIFE_RELATIONSHIP_SECTION_YEAR_REJECT|section=%s|queued_world_year=%d|required_world_year=%d"
+					% [
+						queued_section_id,
+						queued_world_year,
+						required_world_year
+					]
+				)
+
 				pending_section_surface_order.pop_front()
 				pending_section_surface_contracts.erase(
 					queued_section_id
@@ -2103,6 +2126,27 @@ func has_renderable_contract(
 		):
 			return false
 
+		# DIAGNOSTIC: prison guards/inmates screen goes blank again after an
+		# ordinary age-up despite the engine-side data and republish both
+		# looking correct. Report the exact numbers this freshness check is
+		# comparing so we can see whether it's a real year mismatch or
+		# something else rejecting the contract.
+		EraLog.truth(
+			"ERALIFE_RELATIONSHIP_FRESHNESS_CHECK|actor_id=%d|required_world_year=%d|observed_world_year=%d|active_section_id=%s|incarceration_mode=%s"
+			% [
+				actor_id,
+				required_world_year,
+				observed_world_year,
+				active_section_id,
+				str(
+					active_contract.get(
+						"incarceration_mode",
+						false
+					)
+				)
+			]
+		)
+
 		if (
 			required_world_year != -999999
 			and observed_world_year != required_world_year
@@ -2329,14 +2373,14 @@ func _build_section_surface(
 	if content_root.get_child_count() == 0:
 		_add_info_card_to(
 			content_root,
-			"Observable Reality",
+			"Nothing Here",
 			[
 				str(
 					section_contract.get(
 						"status_text",
 						(
-							"This projection is resident but currently "
-							+ "contains no visible cards."
+							"There's nothing to show "
+							+ "here right now."
 						)
 					)
 				)
@@ -2426,7 +2470,14 @@ func _stream_rows_cooperatively(root: VBoxContainer, pending_rows: Array) -> voi
 
 	_service_row_stream_quantum(root, generation)
 
-func _service_row_stream_quantum(root: VBoxContainer, generation: int) -> void:
+func _service_row_stream_quantum(root, generation: int) -> void:
+	# FIX: root used to be typed VBoxContainer, but this function is reached via
+	# a deferred call / one-shot signal bind queued a frame (or more) earlier.
+	# If the container gets torn down in the meantime (a tab/section rebuild
+	# while a big list is still mid-stream), Godot errors trying to satisfy the
+	# strict type against a now-freed object before this function body -- and
+	# the is_instance_valid() guard below -- ever gets to run. Untyped lets the
+	# guard actually do its job.
 	if root == null or not is_instance_valid(root):
 		return
 
@@ -2539,7 +2590,7 @@ func _render_row_into(
 				str(
 					row.get(
 						"title",
-						"Institution Reality"
+						"Institution Info"
 					)
 				),
 				_array(
@@ -2571,7 +2622,7 @@ func _render_row_into(
 					str(
 						row.get(
 							"title",
-							"Institution Reality"
+							"Institution Info"
 						)
 					),
 					_array(
@@ -2735,14 +2786,14 @@ func _render_relationship_marriage_planner_into(
 
 	var planner_status_label:= Label.new()
 	planner_status_label.text = (
-		"Publishing resident wedding and realm choices…"
+		"Loading wedding and realm choices…"
 		if bool(
 			row.get(
 				"projection_pending",
 				false
 			)
 		)
-		else "Marriage planner is resident."
+		else "Marriage planner is ready."
 	)
 	planner_status_label.autowrap_mode = (
 		TextServer.AUTOWRAP_WORD_SMART
@@ -3044,7 +3095,7 @@ func _refresh_marriage_planner_total_label(
 		or honeymoon_picker.item_count <= 0
 	):
 		total_label.text = (
-			"Waiting for resident wedding and honeymoon choices…"
+			"Waiting for wedding and honeymoon choices…"
 		)
 		return
 
@@ -3766,7 +3817,7 @@ func stream_section_contract_background(
 func prepare_observable_actor_shell(
 	actor_id: int,
 	message: String = (
-		"Live truth is publishing into this surface."
+		"Loading..."
 	)
 ) -> void:
 	prepare_surface(
@@ -4062,7 +4113,7 @@ func _render_communal_zone_into(root: VBoxContainer, row: Dictionary) -> void:
 		_add_section_heading_to(
 			root,
 			"Visible Social Groups",
-			"These groups are an already-resolved SchoolEngine projection."
+			"These groups are already settled for this visit."
 		)
 
 		var group_grid:= GridContainer.new()
@@ -4085,7 +4136,7 @@ func _render_communal_zone_into(root: VBoxContainer, row: Dictionary) -> void:
 	_add_section_heading_to(
 		root,
 		"Students In The Area",
-		"Every card remains independently observable, even when the student belongs to a group."
+		"Every student still shows their own card, even within a group."
 	)
 
 	if people.is_empty():
@@ -5157,8 +5208,7 @@ func _ensure_section_surface_placeholder(
 		VERTICAL_ALIGNMENT_CENTER
 	)
 	placeholder_label.text = (
-		"%s is resident. Its prepared cards are attaching "
-		+ "without blocking observation."
+		"Loading %s..."
 	) % (
 		label_text
 		if label_text.strip_edges() != ""

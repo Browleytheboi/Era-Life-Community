@@ -3287,7 +3287,45 @@ func _finalize_sentence(case_data: Dictionary, sentence_multiplier: float, verdi
 			"popup_footer": "Tap anywhere to continue."
 		}
 
-	_set_sentence_trait(years)
+	# FIX: this function used to only set the InPrison_N trait directly, never
+	# creating a PrisonEngine.execute_sentence() record. yearly_tick_actor()
+	# finds no inmate_records row for a sentence started this way and falls
+	# back to _legacy_trait_sentence_tick(), which decrements the trait but
+	# never touches the modern incarceration state the prison HUD actually
+	# reads -- the years-never-advance, never-released bug. Route through
+	# PrisonEngine so both the trait and the modern record exist together;
+	# fall back to the old trait-only path if PrisonEngine is unavailable.
+	if (
+		gs.prison_engine != null
+		and gs.prison_engine.has_method("execute_sentence")
+	):
+		gs.prison_engine.execute_sentence(
+			{
+				"case_id": (
+					"crime_engine_case_%d_%d"
+					% [int(gs.player.id), int(gs.year)]
+				),
+				"participants": {"accused": int(gs.player.id)},
+				"crime": {
+					# CrimeEngine's own severity scale tops out at 5 (see its crime
+					# catalog); PrisonEngine/JusticeSystemEngine expect 0.0-1.0.
+					"severity": clampf(
+						float(case_data.get("severity", 1)) / 5.0,
+						0.0,
+						1.0
+					),
+					"name": _format_charge_list(case_data.get("charges", [])),
+					"type": str(case_data.get("crime_name", "crime"))
+				}
+			},
+			{
+				"type": "prison",
+				"duration": years
+			}
+		)
+	else:
+		_set_sentence_trait(years)
+
 	gs.scenario_state ["justice_prison_id"] = str(case_data.get("prison_id", ""))
 	var institutions: Dictionary = get_justice_institutions()
 	_remove_institution_member(institutions, str(case_data.get("court_id", "")), int(gs.player.id))

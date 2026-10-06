@@ -213,7 +213,19 @@ func execute_sentence(
 		)
 	] = row.duplicate(true)
 
-
+	# DIAGNOSTIC: confirms the inmate record actually gets a real sentence
+	# duration at intake, before chasing the display side of a "sentence
+	# years not shown" report.
+	EraLog.truth(
+		"ERALIFE_PRISON_INTAKE_ROW|accused=%d|sentence_type=%s|sentence_years=%d|years_remaining=%d|facility_id=%s"
+		% [
+			accused_id,
+			sentence_type,
+			int(row.get("sentence_years", -1)),
+			int(row.get("years_remaining", -1)),
+			facility_id
+		]
+	)
 
 	_register_prison_resident(
 		row,
@@ -513,6 +525,37 @@ func yearly_tick_actor(
 	)
 	_apply_prison_context_to_actor(
 		actor_id,
+		row
+	)
+
+	# FIX: the published reality contract the UI actually reads
+	# (resident_prison_reality_by_actor) was only ever refreshed at intake
+	# and at release -- an ordinary year of an ongoing sentence updated the
+	# real inmate_records row (years served/remaining, population, guards)
+	# but never republished the cached snapshot the screen displays, so
+	# nothing on screen ever advanced even though the underlying data did.
+	# Same publish/observe gap as the relationships-tab bug, different tab.
+	_publish_prison_facility_residency(
+		str(
+			row.get(
+				"facility_id",
+				""
+			)
+		),
+		"prison_yearly_tick"
+	)
+
+	# FIX: republishing resident_prison_reality_by_actor above refreshes the
+	# engine-side snapshot (now stamped with the current world year, per the
+	# surface_revision fix above), but nothing actually told the crime hub
+	# to re-fetch it and hand it to the screen -- CrimeHubContractEngine
+	# only listens for intake/release events, not the yearly tick. Without
+	# this, the panel's cached guards/inmates contract keeps last year's
+	# world year baked into its revision tag, the relationships freshness
+	# gate rejects it as stale the moment a new year starts, and the tab
+	# falls back to the "publishing live" placeholder with no cards.
+	_record(
+		"prison_yearly_tick",
 		row
 	)
 
@@ -1302,6 +1345,16 @@ func _prison_population_cards(
 			"person_id": inmate_actor_id,
 			"label": inmate_name,
 			"name": inmate_name,
+			# FIX: _build_person_card() renders its title from "target_name"
+			# (falling back to "full_name"/"display_line"/etc, never "label"
+			# or "name"), so without this key every card silently rendered
+			# the generic default, "Person", instead of the real name.
+			"target_name": inmate_name,
+			"profile_contract": _incarceration_profile_contract(
+				actor_id,
+				inmate,
+				relationship_label
+			),
 			"role": relationship_label,
 			"relationship_label": relationship_label,
 			"subtitle": "%s • %s • %d years remaining" % [
@@ -1501,6 +1554,26 @@ func export_state() -> Dictionary:
 func import_state(
 		data: Dictionary
 ) -> Dictionary:
+	# DIAGNOSTIC: population/guards/sentence all show empty after a genuine
+	# save+reload. Report whether import_state() is even reached, and what
+	# raw inmate_records data it actually receives from the save file.
+	EraLog.truth(
+		"ERALIFE_PRISON_IMPORT_STATE|data_type=%d|has_inmate_records_key=%s|raw_inmate_records=%s"
+		% [
+			typeof(data),
+			str(
+				typeof(data) == TYPE_DICTIONARY
+				and data.has("inmate_records")
+			),
+			str(
+				data.get(
+					"inmate_records",
+					"MISSING"
+				)
+			) if typeof(data) == TYPE_DICTIONARY else "N/A"
+		]
+	)
+
 	if typeof(
 		data
 	) != TYPE_DICTIONARY:
@@ -1958,7 +2031,8 @@ func _prison_relationships_surface_contract(
 
 	var guard_cards: Array = (
 		_prison_guard_cards(
-			row
+			row,
+			actor_id
 		)
 	)
 	var tabs: Array = [
@@ -2009,7 +2083,24 @@ func _prison_relationships_surface_contract(
 			"truth_state": "hot",
 			"projection_complete": true,
 			"authoritative_projection": true,
-			"ui_is_renderer_only": true
+			"ui_is_renderer_only": true,
+			# FIX: _service_section_surface_contract_queue() checks THIS
+			# per-section surface_revision (not the top-level one on the
+			# combined contract) before it will build the real card grid for
+			# a queued section, using the same "<actor_id>:<world_year>:..."
+			# parse. Without it here the check always came back stale and
+			# every section got silently popped and dropped before it ever
+			# reached the card-building step.
+			"surface_revision": (
+				"%d:%d:cellmate:%d"
+				% [
+					actor_id,
+					int(
+						gs.year
+					),
+					cellmate_cards.size()
+				]
+			)
 		},
 		"inmates": {
 			"schema": "eralife.relationships_hub.contract",
@@ -2041,7 +2132,17 @@ func _prison_relationships_surface_contract(
 			"truth_state": "hot",
 			"projection_complete": true,
 			"authoritative_projection": true,
-			"ui_is_renderer_only": true
+			"ui_is_renderer_only": true,
+			"surface_revision": (
+				"%d:%d:inmates:%d"
+				% [
+					actor_id,
+					int(
+						gs.year
+					),
+					inmate_cards.size()
+				]
+			)
 		},
 		"guards": {
 			"schema": "eralife.relationships_hub.contract",
@@ -2073,7 +2174,17 @@ func _prison_relationships_surface_contract(
 			"truth_state": "hot",
 			"projection_complete": true,
 			"authoritative_projection": true,
-			"ui_is_renderer_only": true
+			"ui_is_renderer_only": true,
+			"surface_revision": (
+				"%d:%d:guards:%d"
+				% [
+					actor_id,
+					int(
+						gs.year
+					),
+					guard_cards.size()
+				]
+			)
 		}
 	}
 
@@ -2088,10 +2199,21 @@ func _prison_relationships_surface_contract(
 	)
 	active ["incarceration_mode"] = true
 	active ["ordinary_relationship_graph_suppressed"] = true
+	# FIX: InstitutionHubPanelBase's relationships freshness gate
+	# (_relationship_observation_contract_world_year) parses this string as
+	# "<actor_id>:<world_year>:...", both required to be ints, to decide
+	# whether a contract is current. The old format led with the literal
+	# label "prison_relationships", which isn't a valid int, so the parser
+	# always bailed out and the panel rejected this contract as a stale
+	# historical packet -- even when freshly published moments ago. Leading
+	# with the real actor id and world year fixes that.
 	active ["surface_revision"] = (
-		"prison_relationships:%d:%s:%d"
+		"%d:%d:%s:%d"
 		% [
 			actor_id,
+			int(
+				gs.year
+			),
 			str(
 				row.get(
 					"facility_id",
@@ -2557,6 +2679,29 @@ func _prison_activities_surface_contract(
 		"active_section": "all",
 		"identity_overview": {
 			"actor_id": actor_id,
+			# FIX: ActivitiesHubPanel reads identity.get("age", 0) and
+			# identity.get("year", 0) directly -- this dict never carried
+			# either key, so the YARD panel's "Current Life" strip always
+			# showed "AGE 0 / YEAR 0" regardless of the actual player.
+			"age": (
+				int(
+					_actor_by_id(
+						actor_id
+					).age
+				)
+				if _actor_by_id(
+					actor_id
+				) != null
+				else 0
+			),
+			"year": (
+				int(
+					gs.year
+				)
+				if gs != null
+				else 0
+			),
+			"era_name": _current_era_name(),
 			"location": str(
 				row.get(
 					"facility_label",
@@ -2729,6 +2874,9 @@ func _prison_career_surface_contract(
 	var jobs: Array = _prison_work_actions_for_era(
 		_current_era_name()
 	)
+	var actor = _actor_by_id(
+		actor_id
+	)
 	var full_time_catalog: Dictionary = {
 		"success": true,
 		"schema": "eralife.career_catalog_contract",
@@ -2793,7 +2941,32 @@ func _prison_career_surface_contract(
 		],
 		"identity_overview": {
 			"actor_id": actor_id,
-			"name": "",
+			# FIX: mirrors the JailEngine career-panel fix -- this dict never
+			# had an "age" key, so CareerHubPanel._render_identity_overview()
+			# (which reads resolved.get("age", 0) directly) always showed
+			# "AGE: 0" on the prison career panel regardless of real age.
+			"name": (
+				(
+					"%s %s"
+					% [
+						str(
+							actor.first_name
+						),
+						str(
+							actor.last_name
+						)
+					]
+				).strip_edges()
+				if actor != null
+				else ""
+			),
+			"age": (
+				int(
+					actor.age
+				)
+				if actor != null
+				else 0
+			),
 			"role": "Inmate",
 			"context": str(
 				row.get(
@@ -2856,7 +3029,8 @@ func _prison_facility_surface_contract(
 		population_cards: Array
 ) -> Dictionary:
 	var guard_cards: Array = _prison_guard_cards(
-		row
+		row,
+		actor_id
 	)
 
 	return {
@@ -3366,18 +3540,311 @@ func _register_prison_resident(
 		facility_id
 	] = member_ids
 
+	# FIX: Brandon reported no other inmates in his prison -- guards show up
+	# correctly (ERALIFE_PRISON_GUARD_LOOKUP confirms them found and alive),
+	# but ERALIFE_PRISON_FACILITY_REGISTRY showed member_ids=[6801] -- just
+	# the player, every single year. Traced it to this function: it only
+	# ever appends the player's own actor_id to a facility's member list.
+	# Nothing anywhere in this file (or the project) ever generates other
+	# inmates the way _ensure_prison_guard_registry_for_facility() already
+	# generates guards -- guards exist because that function has one, the
+	# inmate population never had an equivalent. _prison_population_cards()
+	# was always correctly built to read a facility's member roster and
+	# render cards for anyone other than the player; it just never had
+	# anyone to render. Mirrors the guard registry's own pattern (generate
+	# via gs.npc_factory up to a security-scaled target count) and also
+	# gives each generated inmate a real inmate_records row, since
+	# _prison_population_cards() skips any member with no record. Must run
+	# BEFORE _assign_prison_cellmate() below so a cellmate can actually be
+	# found among the newly-generated population instead of coming up empty
+	# every time.
+	_ensure_prison_population_registry_for_facility(
+		facility_id,
+		facility_contract
+	)
+
 	_assign_prison_cellmate(
 		actor_id,
 		facility_id
 	)
 
-
-
-
 	_ensure_prison_guard_registry_for_facility(
 		facility_id,
 		facility_contract
 	)
+
+	# DIAGNOSTIC: population and guards still show empty even after the
+	# republish fix. Report exactly what these two registries hold for this
+	# facility right after both are supposed to have been populated.
+	EraLog.truth(
+		"ERALIFE_PRISON_FACILITY_REGISTRY|facility_id=%s|member_ids=%s|guard_ids=%s"
+		% [
+			facility_id,
+			str(
+				prison_facility_members_by_id.get(
+					facility_id,
+					[]
+				)
+			),
+			str(
+				prison_guard_ids_by_facility.get(
+					facility_id,
+					[]
+				)
+			)
+		]
+	)
+
+
+func _ensure_prison_population_registry_for_facility(
+		facility_id: String,
+		facility_contract: Dictionary
+) -> void:
+	var clean_facility_id: String = str(
+		facility_id
+	).strip_edges()
+
+	if (
+		clean_facility_id == ""
+		or gs == null
+	):
+		return
+
+	var member_ids: Array = _safe_array(
+		prison_facility_members_by_id.get(
+			clean_facility_id,
+			[]
+		)
+	).duplicate(false)
+
+	var existing_other_inmates: int = 0
+
+	for raw_member_id in member_ids:
+		var member_id: int = int(
+			raw_member_id
+		)
+		var member_row: Dictionary = _safe_dictionary(
+			inmate_records.get(
+				str(
+					member_id
+				),
+				{}
+			)
+		)
+
+		if (
+			not member_row.is_empty()
+			and str(
+				member_row.get(
+					"facility_id",
+					""
+				)
+			).strip_edges() == clean_facility_id
+		):
+			existing_other_inmates += 1
+
+	var security_level: String = str(
+		facility_contract.get(
+			"security_level",
+			"Medium"
+		)
+	).strip_edges()
+
+	var target_count: int = 4
+
+	match security_level:
+		"High":
+			target_count = 6
+
+		"Maximum":
+			target_count = 8
+
+		_:
+			target_count = 4
+
+	target_count = clampi(
+		target_count,
+		3,
+		8
+	)
+
+	var ordinal: int = existing_other_inmates
+
+	while existing_other_inmates < target_count:
+		var inmate: Person = _create_prison_inmate_person(
+			clean_facility_id,
+			facility_contract,
+			ordinal
+		)
+
+		if inmate == null:
+			break
+
+		if int(inmate.id) not in member_ids:
+			member_ids.append(
+				int(
+					inmate.id
+				)
+			)
+
+		existing_other_inmates += 1
+		ordinal += 1
+
+	member_ids.sort()
+
+	prison_facility_members_by_id [
+		clean_facility_id
+	] = member_ids
+
+
+func _create_prison_inmate_person(
+		facility_id: String,
+		facility_contract: Dictionary,
+		ordinal: int
+) -> Person:
+	if (
+		gs == null
+		or gs.npc_factory == null
+		or not gs.npc_factory.has_method(
+			"create_random_npc"
+		)
+	):
+		return null
+
+	var inmate: Person = gs.npc_factory.create_random_npc(
+		false
+	)
+
+	if inmate == null:
+		return null
+
+	inmate.age = 20 + int(
+		abs(
+			hash(
+				"%s|inmate|%d"
+				% [
+					facility_id,
+					ordinal
+				]
+			)
+		) % 40
+	)
+	inmate.alive = true
+	inmate.health = maxf(
+		float(
+			inmate.health
+		),
+		40.0
+	)
+	inmate.mental_health = maxf(
+		float(
+			inmate.mental_health
+		),
+		30.0
+	)
+
+	if typeof(inmate.traits) != TYPE_ARRAY:
+		inmate.traits = []
+
+	if "Incarcerated" not in inmate.traits:
+		inmate.traits.append(
+			"Incarcerated"
+		)
+
+	var facility_trait: String = (
+		"FacilityResident:%s"
+		% facility_id
+	)
+
+	if facility_trait not in inmate.traits:
+		inmate.traits.append(
+			facility_trait
+		)
+
+	if typeof(inmate.memories) != TYPE_ARRAY:
+		inmate.memories = []
+
+	inmate.memories.append(
+		(
+			"I was sentenced and sent to %s."
+			% str(
+				facility_contract.get(
+					"facility_label",
+					"a prison"
+				)
+			)
+		)
+	)
+
+	if gs.has_method(
+		"register_npc"
+	):
+		gs.register_npc(
+			inmate
+		)
+	elif (
+		"npcs" in gs
+		and typeof(
+			gs.npcs
+		) == TYPE_ARRAY
+	):
+		gs.npcs.append(
+			inmate
+		)
+
+	var sentence_years: int = 2 + int(
+		abs(
+			hash(
+				"%s|sentence|%d"
+				% [
+					facility_id,
+					ordinal
+				]
+			)
+		) % 8
+	)
+	var inmate_id: String = (
+		"inmate_%d_npc_%s"
+		% [
+			int(
+				inmate.id
+			),
+			facility_id
+		]
+	)
+
+	inmate_records [
+		str(
+			inmate.id
+		)
+	] = {
+		"schema": "eralife.prison_inmate_record",
+		"version": 2,
+		"inmate_id": inmate_id,
+		"case_id": "npc_generated:%s" % facility_id,
+		"accused_id": int(
+			inmate.id
+		),
+		"sentence_type": "prison",
+		"sentence_years": sentence_years,
+		"life_without_parole": false,
+		"years_served": 0,
+		"years_remaining": sentence_years,
+		"months_served": 0,
+		"sentence_months": sentence_years * 12,
+		"facility_id": facility_id,
+		"facility_label": str(
+			facility_contract.get(
+				"facility_label",
+				"Prison"
+			)
+		),
+		"npc_generated": true
+	}
+
+	return inmate
+
+
 func _ensure_prison_guard_registry_for_facility(
 		facility_id: String,
 		facility_contract: Dictionary
@@ -3593,7 +4060,8 @@ func _prison_guard_role_for_era(
 
 
 func _prison_guard_cards(
-		row: Dictionary
+		row: Dictionary,
+		actor_id: int = -1
 ) -> Array:
 	var facility_id: String = str(
 		row.get(
@@ -3622,6 +4090,7 @@ func _prison_guard_cards(
 			continue
 
 		var guard: Person = null
+		var lookup_stage: String = "none"
 
 		if (
 			gs != null
@@ -3634,6 +4103,9 @@ func _prison_guard_cards(
 				false
 			)
 
+			if guard != null:
+				lookup_stage = "npc_index"
+
 		if (
 			guard == null
 			and gs != null
@@ -3644,6 +4116,24 @@ func _prison_guard_cards(
 			guard = gs.get_or_reactivate_npc_by_id(
 				guard_id
 			)
+
+			if guard != null:
+				lookup_stage = "reactivate"
+
+		# DIAGNOSTIC: guard_ids are confirmed present in
+		# prison_guard_ids_by_facility right after intake, but the on-screen
+		# guards tab still shows nobody. Report exactly which lookup stage
+		# resolved (or failed to resolve) each guard id, and whether a
+		# resolved guard was rejected for being marked not alive.
+		EraLog.truth(
+			"ERALIFE_PRISON_GUARD_LOOKUP|guard_id=%d|stage=%s|found=%s|alive=%s"
+			% [
+				guard_id,
+				lookup_stage,
+				str(guard != null),
+				str(guard.alive if guard != null else null)
+			]
+		)
 
 		if (
 			guard == null
@@ -3675,6 +4165,15 @@ func _prison_guard_cards(
 			"person_id": guard_id,
 			"label": guard_name,
 			"name": guard_name,
+			# FIX: same missing key as the inmate/cellmate cards -- the card
+			# renderer reads "target_name" for its title text, not "label"
+			# or "name", so without this every guard card showed "Person".
+			"target_name": guard_name,
+			"profile_contract": _incarceration_profile_contract(
+				actor_id,
+				guard,
+				"Guard"
+			),
 			"role": str(
 				guard.job
 			),
@@ -3856,6 +4355,17 @@ func _rebuild_resident_prison_indexes_from_canonical_records() -> void:
 		_register_prison_resident(
 			row,
 			facility_contract
+		)
+
+		# FIX: rebuilding these indexes on load restores PrisonEngine's own
+		# bookkeeping, but never re-stamped the actual Person object as
+		# incarcerated -- current_context/incarceration_state are runtime
+		# fields the actor needs re-applied every time, not just at sentencing
+		# and yearly tick. Without this, a reload silently drops the actor
+		# back to "free" while the sentence record underneath is still intact.
+		_apply_prison_context_to_actor(
+			actor_id,
+			row
 		)
 
 	for raw_facility_id in prison_facility_members_by_id.keys():
@@ -4375,6 +4885,43 @@ func _actor_by_id(actor_id: int):
 		if restored != null:
 			return restored
 	return null
+
+
+func _incarceration_profile_contract(
+		actor_id: int,
+		target,
+		relationship_label: String
+) -> Dictionary:
+	# FIX: "Open full relationship profile" on an inmate/guard card always
+	# failed with "The resident relationship profile projection is not
+	# hot." -- MainScene._on_relationship_hub_panel_action_requested() opens
+	# a card's profile straight from a "profile_contract" key baked into
+	# the card itself (see RelationshipsHubContractEngine's cards, which all
+	# carry one); our prison/jail population and guard cards never had one,
+	# so the open handler always received an empty dict and rejected it.
+	# Build the same contract the ordinary relationship cards use.
+	if (
+		gs == null
+		or gs.relationships_hub_contract_engine == null
+		or target == null
+	):
+		return {}
+
+	var actor = _actor_by_id(
+		actor_id
+	)
+
+	if actor == null:
+		return {}
+
+	return gs.relationships_hub_contract_engine.emit_profile_contract(
+		actor,
+		target,
+		{
+			"relationship_role": relationship_label,
+			"projection_read_only": true
+		}
+	)
 
 
 func _current_era_name() -> String:

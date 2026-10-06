@@ -115,7 +115,7 @@ func create_relationship_invitation(
 	_ensure_state()
 	if actor == null or target == null:
 		return _failure(
-			"relationship_target_missing", "Choose an observable relationship to invite."
+			"relationship_target_missing", "Choose a relationship to invite."
 		)
 
 	var invitation: Dictionary = _new_invitation(
@@ -274,7 +274,7 @@ func accept_invitation(
 	var clean_id: String = str(invitation_id).strip_edges()
 	var invitation: Dictionary = _dict(invitations.get(clean_id, {}))
 	if invitation.is_empty():
-		return _failure("invitation_missing", "That minigame invitation is no longer observable.")
+		return _failure("invitation_missing", "That minigame invitation is no longer available.")
 
 	invitation ["status"] = "accepted"
 	invitation ["accepted_at_ms"] = int(Time.get_ticks_msec())

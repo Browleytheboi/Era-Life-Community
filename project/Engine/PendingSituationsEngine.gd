@@ -898,6 +898,22 @@ func runtime_tick(
 				actor_key
 			] = baseline_signature
 
+			# DIAGNOSTIC: confirms whether age/year-window seeding actually ran this
+			# tick and how many contracts it produced. If this never fires again
+			# after a long uninteracted stretch, the signature gate above (or
+			# whatever it reads) is the thing silently blocking new situations.
+			EraLog.truth(
+				"ERALIFE_PENDING_SITUATIONS_SEED|actor_id=%d|signature=%s|birth_success=%s|birth_created=%d|age_success=%s|age_created=%d"
+				% [
+					actor_id,
+					baseline_signature,
+					str(birth_seed_report.get("success", false)),
+					int(birth_seed_report.get("created_count", birth_seed_report.get("contracts_created", 0))),
+					str(age_seed_report.get("success", false)),
+					int(age_seed_report.get("created_count", age_seed_report.get("contracts_created", 0)))
+				]
+			)
+
 	var relationship_seed_report: Dictionary = {}
 
 	if actor != null and actor_id > 0:
@@ -7194,6 +7210,20 @@ func emit_crime_pretrial_disposition_contract(
 ) -> Dictionary:
 	_ensure_state()
 
+	# DIAGNOSTIC: ERALIFE_PRETRIAL_DISPOSITION_ACTIVATE never fires, meaning
+	# this function is bailing before it ever reaches the activation call
+	# below. Report every real entry and exactly which dependency is missing.
+	EraLog.truth(
+		"ERALIFE_PRETRIAL_DISPOSITION_ENTRY|actor=%d|case_empty=%s|gs_present=%s|scenario_runtime_contract_engine_present=%s|arrested=%s"
+		% [
+			int(actor.id) if actor != null else -1,
+			str(case_data.is_empty()),
+			str(gs != null),
+			str(gs != null and gs.scenario_runtime_contract_engine != null),
+			str(arrested)
+		]
+	)
+
 	if (
 		actor == null
 		or case_data.is_empty()
@@ -7429,6 +7459,17 @@ func emit_crime_pretrial_disposition_contract(
 		.activate_popup_contract(
 			contract
 		)
+	)
+
+	# DIAGNOSTIC: pairs with ERALIFE_LIVE_TRIAL_QUEUE -- confirms whether the
+	# pretrial-disposition popup actually activated, or silently failed.
+	EraLog.truth(
+		"ERALIFE_PRETRIAL_DISPOSITION_ACTIVATE|case_id=%s|success=%s|reason=%s"
+		% [
+			case_id,
+			str(bool(activation_report.get("success", false))),
+			str(activation_report.get("reason", "-"))
+		]
 	)
 
 	emit_pending_situations_summary_contract({

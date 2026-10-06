@@ -4720,6 +4720,36 @@ func _materialize_checkpoint_resume_shell(
 			"reason": "resident_runtime_missing"
 		}
 
+	# FIX: this resume shell has been patched engine-by-engine all night (jail,
+	# prison, case_orchestrator, life_engine) as each missing one surfaced a new
+	# symptom -- most recently crime_hub_contract_engine, which decides whether the
+	# player sees the prison surface at all. GameState already has a comprehensive
+	# "construct whatever's missing" function used by the real load_game() path;
+	# call it here instead of continuing to chase engines one at a time.
+	resident_gs._ensure_load_game_runtime_dependencies()
+
+	# FIX: mod_menu_contract_engine specifically is NOT among the engines
+	# _ensure_load_game_runtime_dependencies() constructs (confirmed via
+	# ERALIFE_MODS_SURFACE_ENTRY showing engine_null=true on the resume chassis) --
+	# it's only ever constructed in the fresh-boot paths. Without it, the "mods"
+	# projection step goes straight to the permanent-pending fallback with nothing
+	# to reach even the authoritative_projection fix, which blocks every process
+	# that waits for the full surface deck (the resume rebuild, the age-up pump).
+	if resident_gs.mod_menu_contract_engine == null:
+		resident_gs.mod_menu_contract_engine = ModMenuContractEngine.new(resident_gs)
+
+	# FIX: population_lifecycle_manager -- the engine get_or_reactivate_npc_by_id()
+	# falls through to when an NPC isn't already loaded in memory -- is likewise
+	# only ever constructed in the two fresh-boot paths, never on resume. Without
+	# it, any NPC outside whatever the lightweight resume happened to load is
+	# permanently unresolvable: confirmed as the cause of guard/inmate cards never
+	# appearing (ERALIFE_PRISON_GUARD_LOOKUP showing stage=none for every guard id)
+	# and, more severely, of the normal relationships hub hanging forever waiting
+	# to resolve family members it can never find, which hard-locks age-up at
+	# release. Construct it here the same way the fresh-boot paths do.
+	if resident_gs.population_lifecycle_manager == null:
+		resident_gs.population_lifecycle_manager = PopulationLifecycleManager.new(resident_gs)
+
 	# FIX: this is the only hydration a checkpoint resume performs -- the resume truth
 	# reports full_payload_hydrated=false, so the save payload is never applied. Three
 	# earlier attempts put this restore on payload-hydration paths that never run.
@@ -4747,6 +4777,15 @@ func _materialize_checkpoint_resume_shell(
 		if resident_gs.heirloom_engine == null and resume_registry.has("heirlooms"):
 			resident_gs.heirloom_engine = HeirloomEngine.new(resident_gs)
 
+		if resident_gs.jail_engine == null and resume_registry.has("jail_engine_state"):
+			resident_gs.jail_engine = JailEngine.new(resident_gs)
+
+		if resident_gs.prison_engine == null and resume_registry.has("prison_engine_state"):
+			resident_gs.prison_engine = PrisonEngine.new(resident_gs)
+
+		if resident_gs.case_orchestrator == null and resume_registry.has("case_orchestrator_state"):
+			resident_gs.case_orchestrator = CaseOrchestrator.new(resident_gs)
+
 		if resident_gs.vehicle_engine != null and resume_registry.has("vehicles"):
 			resident_gs.vehicle_engine.vehicles = _normalize_owner_keyed_store(resume_registry.get("vehicles", {}))
 			resume_restored.append("vehicles")
@@ -4765,6 +4804,18 @@ func _materialize_checkpoint_resume_shell(
 		if resident_gs.heirloom_engine != null and resume_registry.has("heirlooms"):
 			resident_gs.heirloom_engine.heirlooms = _normalize_owner_keyed_store(resume_registry.get("heirlooms", {}))
 			resume_restored.append("heirlooms")
+
+		if resident_gs.jail_engine != null and resume_registry.has("jail_engine_state"):
+			resident_gs.jail_engine.import_state(resume_registry.get("jail_engine_state", {}))
+			resume_restored.append("jail_engine_state")
+
+		if resident_gs.prison_engine != null and resume_registry.has("prison_engine_state"):
+			resident_gs.prison_engine.import_state(resume_registry.get("prison_engine_state", {}))
+			resume_restored.append("prison_engine_state")
+
+		if resident_gs.case_orchestrator != null and resume_registry.has("case_orchestrator_state"):
+			resident_gs.case_orchestrator.import_state(resume_registry.get("case_orchestrator_state", {}))
+			resume_restored.append("case_orchestrator_state")
 
 	# FIX: pets stayed broken after a load -- existing ones did not come back and new
 	# purchases silently did nothing -- because the resumed runtime has no
@@ -4971,6 +5022,21 @@ func _materialize_checkpoint_resume_shell(
 			actor_snapshot [property_name]
 		)
 
+	# DIAGNOSTIC: age and bank_balance show 0 after a resume even though the copy
+	# loop above should carry them from actor_snapshot. Report what the snapshot
+	# actually held going in and what the new actor ended up with coming out.
+	EraLog.truth(
+		"ERALIFE_RESUME_ACTOR_REBUILD|has_age_key=%s|snapshot_age=%s|actor_age_after=%s|has_bank_key=%s|snapshot_bank=%s|actor_bank_after=%s"
+		% [
+			str(actor_snapshot.has("age")),
+			str(actor_snapshot.get("age", "MISSING")),
+			str(actor.age),
+			str(actor_snapshot.has("bank_balance")),
+			str(actor_snapshot.get("bank_balance", "MISSING")),
+			str(actor.bank_balance)
+		]
+	)
+
 	actor.id = actor_id
 	resident_gs.player = actor
 	resident_gs.player_id = actor_id
@@ -4991,6 +5057,143 @@ func _materialize_checkpoint_resume_shell(
 		)
 	)
 	resident_gs._rebuild_npc_index()
+
+	# FIX: jail/prison/case_orchestrator import_state() above runs before the real
+	# player object exists (it's still the default chassis actor at that point), so
+	# PrisonEngine's own re-stamp of actor.current_context -- already fixed once
+	# before, see PrisonEngine._rebuild_resident_prison_indexes_from_canonical_records()
+	# -- silently no-ops: it can't find the real actor to stamp. Re-run the same
+	# imports now that resident_gs.player/npcs/index all point at the rebuilt actor,
+	# so the stamp and the resident-reality publish land on the actor the UI reads.
+	if resident_gs.jail_engine != null and resume_registry.has("jail_engine_state"):
+		resident_gs.jail_engine.import_state(resume_registry.get("jail_engine_state", {}))
+
+	if resident_gs.prison_engine != null and resume_registry.has("prison_engine_state"):
+		resident_gs.prison_engine.import_state(resume_registry.get("prison_engine_state", {}))
+
+	if resident_gs.case_orchestrator != null and resume_registry.has("case_orchestrator_state"):
+		resident_gs.case_orchestrator.import_state(resume_registry.get("case_orchestrator_state", {}))
+
+	# DIAGNOSTIC: still showing normal tabs / no sentence text after the re-run
+	# above. Report directly whether resident_prison_reality_by_actor -- the exact
+	# dict resident_prison_reality_contract() reads to decide the prison surface --
+	# actually holds this actor after the re-import, and what current_context ended
+	# up as on the real player object.
+	if resident_gs.prison_engine != null:
+		EraLog.truth(
+			"ERALIFE_RESUME_PRISON_REALITY_CHECK|has_actor_key=%s|reality_by_actor_keys=%s|inmate_records_has_actor=%s|actor_current_context=%s"
+			% [
+				str(resident_gs.prison_engine.resident_prison_reality_by_actor.has(str(actor_id))),
+				str(resident_gs.prison_engine.resident_prison_reality_by_actor.keys()),
+				str(resident_gs.prison_engine.inmate_records.has(str(actor_id))),
+				str(actor.get("current_context"))
+			]
+		)
+
+	# FIX: the data above is now correct (jail/prison/case state restored, actor
+	# re-stamped incarcerated), but the main-tab surface deck was already built
+	# earlier in this resume with the old, wrong assumption, and nothing tells it
+	# to rebuild -- same "stale surface, no caller" shape as the age-up fix in
+	# MainScene._deferred_run_age_up_from_button(). Force a rebuild here, now that
+	# the real incarceration state is in place, so the prison surface (or the
+	# normal one, if not incarcerated) reflects reality instead of the stale guess.
+	# FIX: known, previously-flagged gap ("reality_residency_signature never
+	# written" -- see MainScene._on_button_pressed()'s escape-hatch comment) --
+	# nothing in the resume path ever wrote this onto scenario_state. Every LATER
+	# call that resolves its own signature via _runtime_signature() (age-up's own
+	# rebuild, tab navigation, anything that doesn't already have it in hand the
+	# way this function does) falls back to an empty string and fails with
+	# missing_signature. Write it once here so the rest of the session can find it.
+	if typeof(resident_gs.scenario_state) != TYPE_DICTIONARY:
+		resident_gs.scenario_state = {}
+
+	resident_gs.scenario_state["reality_residency_signature"] = signature
+
+	# FIX: begin_resident_projection() already has a "continuation_relationship_priority"
+	# path that reorders the step list to build relationships BEFORE mods, exactly to
+	# avoid the mods stall starving everything after it -- but it only activates when
+	# checkpoint_resume_not_birth / resident_runtime_restored_from_checkpoint are true
+	# on scenario_state, and nothing in this resume path ever set them. Both are
+	# straightforwardly true right here, so set them before requesting the rebuild.
+	resident_gs.scenario_state["checkpoint_resume_not_birth"] = true
+	resident_gs.scenario_state["resident_runtime_restored_from_checkpoint"] = true
+
+	# DIAGNOSTIC: enable the existing (currently disabled) per-step projection
+	# tracer in _run_projection_step() for this resume's rebuild, to see directly
+	# what the "relationships" step does versus "school" -- whether it's dispatched
+	# at all, empty, stuck pending, or emitted and dropped somewhere after. This is
+	# the exact question the build-67 revert comment left unanswered.
+	resident_gs.scenario_state["eralife_projection_step_trace"] = true
+
+	if resident_gs.reality_projection_contract_engine != null:
+		resident_gs.reality_projection_contract_engine.begin_resident_projection(
+			resident_gs,
+			{
+				"signature": signature,
+				"force_rebuild": true,
+				"interactive_surfaces_only": true,
+				"source": "checkpoint_resume_surface_refresh",
+				"ui_is_renderer_only": true
+			}
+		)
+
+		# FIX: begin_resident_projection() only queues the rebuild -- it's normally
+		# drained a few steps per frame by the interactive UI's own loop, which
+		# doesn't exist yet this early in a resume. Left alone, the watchdog reports
+		# it stalled at 0 steps and the surface never updates. Drain it synchronously
+		# here instead of waiting on a pump that has nothing to call it.
+		var projection_drain_guard: int = 0
+
+		while (
+			projection_drain_guard < 50
+			and not bool(
+				resident_gs.reality_projection_contract_engine
+					.projection_status(signature)
+					.get("complete", false)
+			)
+		):
+			resident_gs.reality_projection_contract_engine.step_resident_projection(
+				signature,
+				8,
+				50
+			)
+			projection_drain_guard += 1
+
+		# DIAGNOSTIC: later publish stage still shows deck_from_scenario_fallback and
+		# installs the pre-prison relationships surface, even though this rebuild
+		# reports no failure. Report the drain outcome and what actually landed in
+		# the exact registry _checkpoint_resume_published_main_tab_contracts_for_actor()
+		# reads (resident_main_tab_surface_contracts_by_actor), to tell "never wrote"
+		# from "wrote, but something later overwrites it."
+		var post_drain_status: Dictionary = (
+			resident_gs.reality_projection_contract_engine.projection_status(signature)
+		)
+		var by_actor_raw: Variant = (
+			resident_gs.scenario_state.get("resident_main_tab_surface_contracts_by_actor", {})
+			if typeof(resident_gs.scenario_state) == TYPE_DICTIONARY
+			else {}
+		)
+		var by_actor: Dictionary = (
+			by_actor_raw as Dictionary
+			if typeof(by_actor_raw) == TYPE_DICTIONARY
+			else {}
+		)
+		var this_actor_packet: Dictionary = (
+			by_actor.get(str(actor_id), {})
+			if by_actor.has(str(actor_id))
+			else {}
+		)
+		EraLog.truth(
+			"ERALIFE_RESUME_PROJECTION_DRAIN|resident_gs_instance_id=%d|drain_iterations=%d|complete=%s|failed=%s|by_actor_keys=%s|this_actor_surface_keys=%s"
+			% [
+				resident_gs.get_instance_id(),
+				projection_drain_guard,
+				str(post_drain_status.get("complete", false)),
+				str(post_drain_status.get("failed", false)),
+				str(by_actor.keys()),
+				str(this_actor_packet.keys())
+			]
+		)
 
 	if typeof(resident_gs.scenario_state) != TYPE_DICTIONARY:
 		resident_gs.scenario_state = {}

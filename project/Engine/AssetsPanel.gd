@@ -95,7 +95,7 @@ func open_for_actor(
 func open_observable_partial(
 	target_actor: Person,
 	status_text: String = (
-		"Asset truth is publishing live."
+		"Loading your assets..."
 	)
 ) -> void:
 	actor = target_actor
@@ -848,7 +848,7 @@ func _begin_progressive_asset_publication() -> void:
 		status_label.text = str(
 			active_contract.get(
 				"status_text",
-				"Asset truth is publishing live."
+				"Loading your assets..."
 			)
 		)
 

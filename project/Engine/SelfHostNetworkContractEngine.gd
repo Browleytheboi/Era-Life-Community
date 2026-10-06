@@ -356,7 +356,7 @@ func invite_username_to_live_reality(recipient_username: String, message: String
 
 	var identity_context: Dictionary = _identity_context()
 	if bool(identity_context.get("is_guest", true)):
-		return _fail("account_required", "Sign into an ErAccount to invite someone into your live reality.", context)
+		return _fail("account_required", "Sign into an ErAccount to invite someone into your live session.", context)
 
 	var publish_report: Dictionary = publish_local_reality_presence({
 		"source": "invite_username_to_live_reality",
@@ -416,7 +416,7 @@ func disconnect_local_reality_presence(context: Dictionary = {}) -> Dictionary:
 	disconnected_presence ["active"] = false
 	disconnected_presence ["hosting"] = false
 	disconnected_presence ["mode"] = "self_host_presence_disconnected"
-	disconnected_presence ["presence_text"] = "%s disconnected from the live reality network." % username
+	disconnected_presence ["presence_text"] = "%s disconnected from the session." % username
 	disconnected_presence ["updated_at_ms"] = int(Time.get_ticks_msec())
 	disconnected_presence ["disconnected_at_ms"] = int(Time.get_ticks_msec())
 

@@ -1128,7 +1128,7 @@ func _render_pending_category_overview(
 		)
 		body_label.clear()
 		body_label.append_text(
-			"This category is not resident in the current pending-situations payload."
+			"There's nothing in this category right now."
 		)
 		_clear_container(
 			list_box

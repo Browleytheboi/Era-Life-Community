@@ -4811,7 +4811,7 @@ func _room(room_id: String, title: String, floor_index: int, description: String
 		"title": title,
 		"name": title,
 		"floor_index": floor_index,
-		"description": description if description.strip_edges() != "" else "%s is part of the property interior reality node." % title,
+		"description": description if description.strip_edges() != "" else "%s is part of the property's interior." % title,
 		"approach_label": approach_label if approach_label.strip_edges() != "" else "Go to %s" % title,
 		"fixtures": fixtures,
 		"access_level": access_level,

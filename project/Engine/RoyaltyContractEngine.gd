@@ -230,7 +230,7 @@ func resolve_intent(
 				"schema": ENGINE_SCHEMA,
 				"version": ENGINE_VERSION,
 				"type": "royalty_truth_observed",
-				"text": "Royalty truth is observable."
+				"text": "Royal standing updated."
 			}
 
 		"abdicate":

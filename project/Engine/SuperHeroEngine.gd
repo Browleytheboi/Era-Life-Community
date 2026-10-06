@@ -4547,7 +4547,7 @@ func _lineage_power_rows(actor: Person) -> Array:
 			rows.append({
 				"id": "lineage_scan_unavailable",
 				"label": "No lineage scan available.",
-				"description": "PowerEngine has no readable family graph for this actor yet.",
+				"description": "We don't have enough family history on file for them yet.",
 				"hide_overview_button": true
 			})
 		return rows

@@ -27,6 +27,12 @@ var runtime_phase_overflow_log: Array = []
 var runtime_slice_visible_watchdog_ms: int = 5200
 var runtime_slice_force_complete_ms: int = 8200
 
+# FIX: tracks the last calendar year the player's school-stage commit was
+# attempted from run_year_runtime_slice() (see there for why). Prevents
+# re-running the commit check on every slice quantum within the same year
+# -- it should fire once per year, not once per frame.
+var last_school_commit_year: int = -2147483648
+
 func _init(_gs):
 	gs = _gs
 	_clear_runtime_state()
@@ -7865,6 +7871,69 @@ func run_year_runtime_slice(max_phase_steps: int = 1, max_commit_stages: int = 1
 			) if gs != null else -1
 		]
 	)
+
+	# FIX: Brandon reported a character permanently stuck unenrolled in
+	# school despite aging up for years. SchoolEngine.yearly_school_tick()
+	# is registered on the "core_state_resolution" phase but never fires on
+	# the visible, budgeted age-up path -- this ERALIFE_SLICE_CURSOR log
+	# line above already proved (via an earlier diagnostic comment on this
+	# same tag) that the phase cursor stalls out partway through most
+	# years on the visible path, so anything registered late in the phase
+	# order silently never runs (reduce_prison_time() and
+	# apply_committed_biases_for_year() have the same problem).
+	#
+	# First attempt hooked begin_runtime_slice_session()'s "new year"
+	# setup block instead of here -- but that block is only entered when
+	# runtime_slice_active is false, which (per the same stalled-cursor
+	# bug) is really only true for the very first year of a session; every
+	# year after that just hits the early-return guard at the top of that
+	# function and skips the block entirely. Confirmed via this exact log
+	# tag: only ever fired once, for age 1, even after Brandon played to
+	# age 10. This call site runs every single year without fail (this
+	# log line is proof), so guard it to once per year with
+	# last_school_commit_year instead and call the commit here.
+	if (
+		gs != null
+		and gs.school_engine != null
+		and gs.player != null
+		and int(
+			gs.year
+		) != last_school_commit_year
+		and gs.school_engine.has_method(
+			"_commit_minor_school_stage_entry_if_due"
+		)
+	):
+		last_school_commit_year = int(
+			gs.year
+		)
+
+		var school_commit_result: Dictionary = (
+			gs.school_engine._commit_minor_school_stage_entry_if_due(
+				gs.player,
+				"age_up_runtime.run_year_runtime_slice"
+			)
+		)
+
+		EraLog.truth(
+			"ERALIFE_SCHOOL_COMMIT_DIRECT|actor_id=%d|age=%d|era=%s|year=%d|result=%s"
+			% [
+				int(
+					gs.player.id
+				),
+				int(
+					gs.player.age
+				),
+				str(
+					gs.era.name
+				) if gs.era != null else "null",
+				int(
+					gs.year
+				),
+				str(
+					school_commit_result
+				)
+			]
+		)
 
 	var loading_raw: Variant = gs.scenario_state.get("loading_runtime", {}) if gs != null and typeof(gs.scenario_state) == TYPE_DICTIONARY else {}
 	var loading: Dictionary = loading_raw if typeof(loading_raw) == TYPE_DICTIONARY else {}

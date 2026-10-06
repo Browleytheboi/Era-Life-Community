@@ -2894,11 +2894,12 @@ func resolve_relationship_lifecycle_intent(
 					"success": true,
 					"popup_title": "Proposal Jewelry",
 					"popup_text": (
-						"No proposal-worthy jewelry is resident "
-						+ "in your belongings."
+						"You don't have any jewelry nice enough "
+						+ "to propose with."
 						if projection_complete
 						else (
-							"Your proposal jewelry is still publishing. "
+							"Still checking your belongings for "
+							+ "proposal-worthy jewelry. "
 							+ "You can keep playing while it finishes."
 						)
 					),
@@ -3077,12 +3078,12 @@ func _commit_relationship_marriage_plan(
 			"success": false,
 			"popup_title": "Marriage Planner",
 			"popup_text": (
-				"Wedding and honeymoon reality is still publishing. "
-				+ "Nothing has blocked; keep playing and try again once "
-				+ "the resident planner has the destination you want."
+				"Your wedding and honeymoon planner is still "
+				+ "loading destinations. Keep playing and try "
+				+ "again once it has the destination you want."
 			),
 			"popup_footer": (
-				"The planner continues publishing without observation."
+				"The planner keeps loading in the background."
 			)
 		}
 
@@ -6828,7 +6829,7 @@ func resolve_pregnancy_response(
 		return {
 			"success": false,
 			"popup_title": "Pregnancy",
-			"popup_text": "That pregnancy is no longer observable.",
+			"popup_text": "That pregnancy can no longer be viewed.",
 			"popup_footer": "Tap anywhere to continue."
 		}
 

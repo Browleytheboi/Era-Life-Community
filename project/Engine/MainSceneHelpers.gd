@@ -6668,9 +6668,9 @@ static func _crime_hub_renderer_chassis_contract() -> Dictionary:
 		"title": "CRIME & JUSTICE",
 		"subtitle": (
 			(
-				"Crime reality is resident. "
-				+ "Targets, criminal intent, cases, weapons, custody, "
-				+ "and legal pressure bind continuously."
+				"Your criminal activity is tracked continuously — "
+				+ "targets, intent, cases, weapons, custody, "
+				+ "and legal pressure all stay up to date."
 			)
 		),
 		"active_section": "overview",

@@ -943,7 +943,7 @@ func _failure(reason: String, extra: Dictionary = {}) -> Dictionary:
 		"reason": reason,
 		"popup_title": "Breeding Failed",
 		"popup_text": str(reason).replace("_", " ").capitalize(),
-		"popup_footer": "No animal reality was committed.",
+		"popup_footer": "No breeding outcome was recorded.",
 		"commit_authority": ENGINE_SCHEMA
 	}
 	for raw_key in extra.keys():

@@ -906,7 +906,7 @@ func render_contract(
 	subtitle_label.text = str(
 		active_contract.get(
 			"subtitle",
-			"Professional reality is observable."
+			"Loading your career details..."
 		)
 	)
 	time_label.text = str(

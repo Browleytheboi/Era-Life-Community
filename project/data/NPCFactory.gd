@@ -36,13 +36,19 @@ func _get_zodiac(month: int, day: int) -> String:
 
 
 func _era_min_age() -> int:
+	# FIX: this used to floor every ambient/background NPC (create_random_npc())
+	# at a "typical working adult" age per era (up to 40 in Future Era) -- which
+	# meant the world population could never contain anyone younger than that,
+	# permanently locking out same-age dating/friend candidates for any player
+	# character below the floor. Age-18+ gating for jobs/bank_balance already
+	# happens separately in _create_base_npc(), so a low floor here is safe.
 	match gs.era.name:
-		"Ancient Era": return 20
-		"Medieval Era": return 20
-		"Industrial Era": return 25
-		"Modern Era": return 30
-		"Future Era": return 40
-	return 20
+		"Ancient Era": return 1
+		"Medieval Era": return 1
+		"Industrial Era": return 1
+		"Modern Era": return 1
+		"Future Era": return 1
+	return 1
 
 func _era_max_age() -> int:
 	match gs.era.name:
@@ -125,6 +131,48 @@ func _apply_realm_generation_profile(npc: Person, realm_id: Variant, profile: Di
 
 
 
+# FIX: a plain randi_range(_era_min_age(), _era_max_age()) spreads ambient NPC
+# ages uniformly across the whole era lifespan (e.g. 1-100 in Modern Era), so
+# only a small sliver ever land near the player's own age -- this is why
+# "find a date" kept surfacing one candidate (or none) regardless of the
+# min-age floor fix above. Weight the roll toward a realistic population
+# pyramid instead, so a real same-age pool always exists.
+func _generate_ambient_npc_age() -> int:
+	var min_age: int = _era_min_age()
+	var max_age: int = _era_max_age()
+
+	var band: String = _weighted_key({
+		"child": 15.0,
+		"young_adult": 35.0,
+		"adult": 25.0,
+		"middle_age": 15.0,
+		"elder": 10.0
+	}, "young_adult")
+
+	var band_min: int
+	var band_max: int
+	match band:
+		"child":
+			band_min = min_age
+			band_max = 17
+		"young_adult":
+			band_min = 18
+			band_max = 30
+		"adult":
+			band_min = 31
+			band_max = 50
+		"middle_age":
+			band_min = 51
+			band_max = 70
+		_:
+			band_min = 71
+			band_max = max_age
+
+	band_min = clampi(band_min, min_age, max_age)
+	band_max = clampi(band_max, band_min, max_age)
+	return randi_range(band_min, band_max)
+
+
 func _create_base_npc() -> Person:
 	var npc:= Person.new()
 	npc.id = gs.next_id
@@ -142,7 +190,7 @@ func _create_base_npc() -> Person:
 		npc.birth_city,
 		npc.birth_country
 	)
-	npc.age = randi_range(_era_min_age(), _era_max_age())
+	npc.age = _generate_ambient_npc_age()
 	npc.traits = []
 	npc.smarts = randi() % 100
 	npc.looks = randi() % 100

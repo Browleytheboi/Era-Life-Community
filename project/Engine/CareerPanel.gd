@@ -82,7 +82,7 @@ func render_contract(
 	subtitle_label.text = str(
 		active_contract.get(
 			"subtitle",
-			"Professional reality is observable."
+			"Loading your career details..."
 		)
 	)
 
@@ -267,7 +267,7 @@ func _ensure_surface() -> void:
 
 	subtitle_label = Label.new()
 	subtitle_label.text = (
-		"Professional reality is observable."
+		"Loading your career details..."
 	)
 	subtitle_label.add_theme_font_size_override(
 		"font_size",

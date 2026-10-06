@@ -692,7 +692,7 @@ func render_contract(
 			"profile_text",
 			(
 				"===== PROFILE =====\n"
-				+ "No profile truth is currently observable."
+				+ "Couldn't load that person's profile right now. Try again."
 			)
 		)
 	)
@@ -738,7 +738,7 @@ func render_contract(
 				) >= 0
 			):
 				resolved_status_text = (
-					"Preparing this viewpoint's resident destination…"
+					"Preparing this viewpoint's profile…"
 				)
 
 		elif (

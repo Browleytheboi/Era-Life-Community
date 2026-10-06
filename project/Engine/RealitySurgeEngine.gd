@@ -162,7 +162,7 @@ func trigger_surge(contract_id: String, actor: Person, event_payload: Dictionary
 	if resolved_contract.is_empty():
 		return {
 			"success": false,
-			"reason": "No matching reality surge contract.",
+			"reason": "No matching event was found.",
 			"contract_id": contract_id
 		}
 

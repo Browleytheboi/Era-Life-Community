@@ -198,7 +198,7 @@ func _render_discord_model(view_model: Dictionary, context: Dictionary) -> Dicti
 	if rows.is_empty():
 		fields.append({
 			"name": "Status",
-			"value": "No rows are available for this surface yet.",
+			"value": "Nothing to show here yet.",
 			"inline": false
 		})
 
@@ -209,7 +209,7 @@ func _render_discord_model(view_model: Dictionary, context: Dictionary) -> Dicti
 				"description": "\n\n".join(description_lines).strip_edges(),
 				"color": _theme_color(view_model, context),
 				"fields": fields,
-				"footer": "EmbeddedUIContractEngine • %s" % surface_id
+				"footer": "EraLife • %s" % surface_id
 			}
 		],
 		"components": _discord_components(view_model),

@@ -656,6 +656,18 @@ func _restore_engine_registry_from_payload(data: Dictionary) -> void:
 			gs.heirloom_engine.heirlooms = engine_registry.get("heirlooms", {})
 			restored_stores.append("heirlooms")
 
+		if gs.jail_engine != null and engine_registry.has("jail_engine_state"):
+			gs.jail_engine.import_state(engine_registry.get("jail_engine_state", {}))
+			restored_stores.append("jail_engine_state")
+
+		if gs.prison_engine != null and engine_registry.has("prison_engine_state"):
+			gs.prison_engine.import_state(engine_registry.get("prison_engine_state", {}))
+			restored_stores.append("prison_engine_state")
+
+		if gs.case_orchestrator != null and engine_registry.has("case_orchestrator_state"):
+			gs.case_orchestrator.import_state(engine_registry.get("case_orchestrator_state", {}))
+			restored_stores.append("case_orchestrator_state")
+
 	var restored_graph: Dictionary = _safe_dictionary(
 		data.get("canonical_relationship_graph", {})
 	)
@@ -4648,6 +4660,18 @@ func _hydrate_entity_graph(data: Dictionary, phase_report: Dictionary, _options:
 			gs.heirloom_engine.heirlooms = engine_registry.get("heirlooms", {})
 			restored_stores.append("heirlooms")
 
+		if gs.jail_engine != null and engine_registry.has("jail_engine_state"):
+			gs.jail_engine.import_state(engine_registry.get("jail_engine_state", {}))
+			restored_stores.append("jail_engine_state")
+
+		if gs.prison_engine != null and engine_registry.has("prison_engine_state"):
+			gs.prison_engine.import_state(engine_registry.get("prison_engine_state", {}))
+			restored_stores.append("prison_engine_state")
+
+		if gs.case_orchestrator != null and engine_registry.has("case_orchestrator_state"):
+			gs.case_orchestrator.import_state(engine_registry.get("case_orchestrator_state", {}))
+			restored_stores.append("case_orchestrator_state")
+
 		EraLog.truth(
 			"ERALIFE_REGISTRY_RESTORED|available=%d|restored=%s"
 			% [engine_registry.size(), str(restored_stores)]
@@ -4785,6 +4809,26 @@ func _hydrate_engine_slice(
 	if save_key == "":
 		return true
 
+	# DIAGNOSTIC: prison/jail/case_orchestrator state never gets imported on
+	# load, even though both engine-construction paths and both save
+	# registries look correct by reading alone. Report every real call for
+	# just these three, and which branch this function takes for them.
+	if engine_id in ["jail_engine", "prison_engine", "case_orchestrator"]:
+		EraLog.truth(
+			"ERALIFE_HYDRATE_SLICE_ENTRY|save_key=%s|engine_id=%s|import_method=%s|required=%s|payload_type=%d|payload_is_empty=%s"
+			% [
+				save_key,
+				engine_id,
+				import_method,
+				str(required),
+				typeof(payload),
+				str(
+					typeof(payload) == TYPE_DICTIONARY
+					and (payload as Dictionary).is_empty()
+				)
+			]
+		)
+
 	if not _slice_allowed_for_profile(
 		slice_contract,
 		options
@@ -4807,6 +4851,16 @@ func _hydrate_engine_slice(
 	var target = _resolve_engine(
 		engine_id
 	)
+
+	if engine_id in ["jail_engine", "prison_engine", "case_orchestrator"]:
+		EraLog.truth(
+			"ERALIFE_HYDRATE_SLICE_TARGET|save_key=%s|engine_id=%s|target_resolved=%s"
+			% [
+				save_key,
+				engine_id,
+				str(target != null)
+			]
+		)
 
 	if target == null:
 		var missing_engine_report: Dictionary = {

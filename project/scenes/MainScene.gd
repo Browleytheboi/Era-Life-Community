@@ -1371,7 +1371,7 @@ func _populate_contract_surface_after_visual_open(
 			"success": false,
 			"popup_title": "Hub Unavailable",
 			"popup_text": (
-				"This contract surface is not available "
+				"This isn't available "
 				+ "for this character, age, or era."
 			),
 			"popup_footer": "Tap anywhere to continue."
@@ -8342,6 +8342,13 @@ func _adopt_attached_resident_game_state(
 	).strip_edges()
 	gs = resident_gs
 
+	# DIAGNOSTIC: confirms this function actually ran (it's one of at least
+	# two ways a life can end up live) and how many NPCs the adopted
+	# GameState is carrying at the moment it becomes the real `gs`. Compare
+	# against ERALIFE_BIRTH_SHELL_NPC_COUNT to see if the population survives
+	# the prewarm-consumption handoff intact.
+	EraLog.truth("ERALIFE_ADOPT_GS_NPC_COUNT|npc_count=%d" % (resident_gs.npcs.size() if typeof(resident_gs.npcs) == TYPE_ARRAY else -1))
+
 	if typeof(
 		gs.scenario_state
 	) != TYPE_DICTIONARY:
@@ -11782,7 +11789,7 @@ func _open_activities_hub_zero_frame_door(
 	if not actor_contract_hot:
 		activities_hub_panel.prepare_observable_actor_shell(
 			actor_id,
-			"Activities truth is publishing live."
+			"Loading your activities..."
 		)
 
 		set_meta(
@@ -13288,8 +13295,8 @@ func _on_career_hub_person_profile_requested(
 		):
 			career_hub_panel.set_status(
 				(
-					"That coworker's resident relationship "
-					+ "profile is still publishing."
+					"That coworker's profile is still "
+					+ "loading. Try again in a moment."
 				)
 			)
 		return
@@ -14734,7 +14741,7 @@ func _show_grocery_aisle_shoppers_popup(
 		subtitle_label.text = (
 			"Store: %s • Aisle: %s\n"
 			+ "Tap any shopper to open their profile. "
-			+ "The cards are resident and update in place."
+			+ "The list updates live."
 		) % [
 			store_display_name,
 			aisle_display_name
@@ -18089,12 +18096,12 @@ func _restore_prewarmed_full_gameplay_ui(
 		)
 
 		_update_save_load_reality_build_panel({
-			"title": "Reconnecting Saved Reality",
+			"title": "Loading Your Save",
 			"body": (
-				"The resident reality is attached, but its "
-				+ "visual shell contract is incomplete."
+				"Your save loaded, but the game world "
+				+ "isn't fully ready yet."
 			),
-			"status": "Repairing the resident life shell...",
+			"status": "Finishing up...",
 			"progress": 0.96,
 			"interaction_state": "buffered",
 			"execution_state": "visual_shell_repair",
@@ -21267,16 +21274,16 @@ func _start_background_hydration_timer(load_report: Dictionary = {}) -> void:
 		return
 
 	if world_actions_status_label != null:
-		world_actions_status_label.text = "You are back in your life. The wider world is still hydrating."
+		world_actions_status_label.text = "You are back in your life. The wider world is still loading."
 
 	set_meta("background_hydration_started_ms", int(Time.get_ticks_msec()))
 	set_meta("background_hydration_last_status_ms", 0)
 	set_meta("background_hydration_last_queue_size", int(load_report.get("background_queue_size", 0)))
 
 	_update_save_load_reality_build_panel({
-		"title": "Reality Still Assembling",
-		"body": "Your life, family, and UI are live. The world outside your immediate shell is streaming in the background.",
-		"status": "Hydrating %d background slice%s..." % [
+		"title": "Still Loading the World",
+		"body": "Your life and family are ready. The rest of the world is still loading in the background.",
+		"status": "Loading %d more piece%s of the world..." % [
 			int(load_report.get("background_queue_size", 0)),
 			"" if int(load_report.get("background_queue_size", 0)) == 1 else "s"
 		],
@@ -21453,7 +21460,7 @@ func _on_background_hydration_timer_timeout() -> void:
 	):
 		if world_actions_status_label != null:
 			world_actions_status_label.text = (
-				"Reality is playable. Hydrating %d background slice%s..."
+				"You can keep playing. Loading %d more piece%s of the world..."
 				% [
 					queue_remaining,
 					(
@@ -21466,7 +21473,7 @@ func _on_background_hydration_timer_timeout() -> void:
 
 		_update_save_load_reality_build_panel({
 			"status": (
-				"Hydrating %d background slice%s..."
+				"Loading %d more piece%s of the world..."
 				% [
 					queue_remaining,
 					(
@@ -21497,7 +21504,7 @@ func _on_background_hydration_finished(
 ) -> void:
 	if world_actions_status_label != null:
 		world_actions_status_label.text = (
-			"Reality fully hydrated."
+			"The world has finished loading."
 		)
 
 
@@ -21522,11 +21529,11 @@ func _on_background_hydration_finished(
 	)
 
 	_update_save_load_reality_build_panel({
-		"title": "Reality Reconstructed",
+		"title": "World Loaded",
 		"body": (
-			"Your saved life, family shell, and wider world are fully live."
+			"Your saved life, family, and the wider world are fully loaded."
 		),
-		"status": "All background slices are complete.",
+		"status": "Everything has finished loading.",
 		"progress": 1.0,
 		"interaction_state": "live",
 		"execution_state": "complete"
@@ -21602,13 +21609,13 @@ func _ensure_save_load_reality_build_panel() -> void:
 	margin.add_child(root)
 
 	save_load_reality_build_title_label = Label.new()
-	save_load_reality_build_title_label.text = "Reconstructing Saved Life"
+	save_load_reality_build_title_label.text = "Loading Your Saved Life"
 	save_load_reality_build_title_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	save_load_reality_build_title_label.add_theme_font_size_override("font_size", 20)
 	root.add_child(save_load_reality_build_title_label)
 
 	save_load_reality_build_body_label = Label.new()
-	save_load_reality_build_body_label.text = "Your life is becoming playable before the rest of reality finishes."
+	save_load_reality_build_body_label.text = "You can start playing while the rest of the world finishes loading."
 	save_load_reality_build_body_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	save_load_reality_build_body_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	save_load_reality_build_body_label.add_theme_font_size_override("font_size", 14)
@@ -21896,7 +21903,7 @@ func _save_current_life_to_slot_deferred(
 
 	if world_actions_status_label != null:
 		world_actions_status_label.text = (
-			"Saving life and reality checkpoint..."
+			"Saving your progress..."
 		)
 
 	var actor_id: int = int(
@@ -22180,19 +22187,19 @@ func _save_current_life_to_slot_deferred(
 		if save_succeeded:
 			if manual_preserve:
 				world_actions_status_label.text = (
-					"Saved %s and their reality checkpoint."
+					"Saved %s and their progress."
 					% actor_first_name
 				)
 			else:
 				world_actions_status_label.text = (
-					"Auto-saved %s and their reality checkpoint."
+					"Auto-saved %s and their progress."
 					% actor_first_name
 				)
 		elif file_saved:
 			world_actions_status_label.text = (
 				(
-					"Life file was written, but the reality "
-					+ "checkpoint could not be committed."
+					"Your save file was written, but the "
+					+ "latest progress could not be committed."
 				)
 			)
 		else:
@@ -22693,7 +22700,7 @@ func _publish_saved_reality_transaction_observation(
 	).strip_edges()
 
 	if clean_label == "":
-		clean_label = "Saved Reality"
+		clean_label = "Your Saved Life"
 
 	if clean_stage == "":
 		clean_stage = "resident_core"
@@ -22715,7 +22722,7 @@ func _publish_saved_reality_transaction_observation(
 
 	if resident_ready:
 		status_text = (
-			"%s resident core is hot. Rebinding the Life lens..."
+			"%s is loaded. Switching to that life..."
 			% clean_label
 		)
 	else:
@@ -22807,9 +22814,20 @@ func _load_life_from_slot_deferred(
 
 	if gs == null:
 		_finish_failed_life_load(
-			"Reality residency could not be created."
+			"Couldn't set up your save to load."
 		)
 		return
+
+	# REVERTED: tried routing through _load_saved_life_playable_first() /
+	# GameStateHydrationRuntime here instead of the resume shell below. It never had
+	# a live caller before tonight, and it turns out why: hydrate_playable_from_path()
+	# reports success=true without actually writing the save's age/bank_balance onto
+	# gs.player -- confirmed via ERALIFE_LOAD_ATTACH_DIAGNOSTIC showing age=0/bank=0
+	# on the correct, same-instance gs right after a "successful" hydrate. That's a
+	# real, separate bug in a codepath nothing has ever exercised; the resume shell
+	# below is the one already proven correct on data (age/money/jail all verified)
+	# after tonight's fixes, so reverting to it rather than debugging a second,
+	# previously-dead system from scratch.
 
 	var signature: String = (
 		MainSceneLogic._checkpoint_residency_signature_from_load_options(
@@ -22858,13 +22876,13 @@ func _load_life_from_slot_deferred(
 	var saved_life_label: String = str(
 		load_options.get(
 			"saved_life_label",
-			"Saved Reality"
+			"Your Saved Life"
 		)
 	).strip_edges()
 
 	if signature == "":
 		_finish_failed_life_load(
-			"Saved-life residency signature is missing."
+			"That saved life could not be identified."
 		)
 		return
 
@@ -22960,7 +22978,7 @@ func _load_life_from_slot_deferred(
 			str(
 				status_report.get(
 					"reason",
-					"Saved reality could not be reserved."
+					"That save could not be loaded."
 				)
 			)
 		)
@@ -23110,7 +23128,7 @@ func _load_life_from_slot_deferred(
 			str(
 				attach_report.get(
 					"reason",
-					"Saved reality could not attach."
+					"Your save could not be loaded."
 				)
 			)
 		)
@@ -23443,7 +23461,7 @@ func _present_attached_checkpoint_lens_now(
 ) -> void:
 	if gs == null or gs.player == null:
 		_finish_failed_life_load(
-			"The attached checkpoint lost its playable actor."
+			"That save lost track of your character."
 		)
 		return
 
@@ -23534,7 +23552,7 @@ func _present_attached_checkpoint_lens_now(
 		)
 	):
 		_finish_failed_life_load(
-			"The resident Life-shell container is missing."
+			"The game screen is missing."
 		)
 		return
 
@@ -23911,6 +23929,48 @@ func _present_attached_checkpoint_lens_now(
 	# starting a NEW world and clears far more than UI caches -- with it in place a
 	# loaded save came up with zeroed stats and no money. The stale-surface problem is
 	# real but this is the wrong lever for it.
+
+	# FIX: the Sentence tab's years-served/years-remaining text never appears after
+	# a resume. _install_incarceration_resident_surfaces() is the only thing that
+	# ever installs it, and it's normally driven by an "incarceration_lens_published"
+	# event-bus signal fired at intake or on a live tick -- the resume path never
+	# fires that event, so this install step simply never runs. Call it directly
+	# here with the same cached contract the prison/relationships fixes already use,
+	# so a resumed incarcerated character gets it too.
+	if (
+		gs != null
+		and gs.player != null
+	):
+		var reattach_actor_id: int = int(gs.player.id)
+		var reattach_custody_contract: Dictionary = {}
+
+		if (
+			gs.prison_engine != null
+			and gs.prison_engine.has_method("resident_prison_reality_contract")
+		):
+			reattach_custody_contract = MainSceneHelpers._safe_dictionary(
+				gs.prison_engine.call(
+					"resident_prison_reality_contract",
+					reattach_actor_id
+				)
+			)
+
+		if (
+			reattach_custody_contract.is_empty()
+			and gs.jail_engine != null
+			and gs.jail_engine.has_method("resident_jail_reality_contract")
+		):
+			reattach_custody_contract = MainSceneHelpers._safe_dictionary(
+				gs.jail_engine.call(
+					"resident_jail_reality_contract",
+					reattach_actor_id
+				)
+			)
+
+		if not reattach_custody_contract.is_empty():
+			_install_incarceration_resident_surfaces(
+				reattach_custody_contract
+			)
 
 	_release_title_card_continue_cover_after_atomic_shell(
 		0
@@ -24367,10 +24427,6 @@ func _attach_restored_reality_after_load() -> void:
 	if not manager.has_method("attach_reality"):
 		return
 
-	if str(manager.attached_signature).strip_edges() != "":
-		EraLog.truth("ERALIFE_LOAD_ATTACH|skipped=already_attached")
-		return
-
 	var records: Dictionary = manager.resident_records
 
 	if typeof(records) != TYPE_DICTIONARY or records.is_empty():
@@ -24388,6 +24444,38 @@ func _attach_restored_reality_after_load() -> void:
 
 	if chosen_signature == "":
 		EraLog.truth("ERALIFE_LOAD_ATTACH|failed=no_usable_signature")
+		return
+
+	# DIAGNOSTIC: after a load that put correct data on gs.player, the screen still
+	# shows a blank character. Report whether "chosen_signature"'s runtime_ref is
+	# literally the same GameState instance hydrate_playable_from_path() just wrote
+	# to, or a separate pooled chassis -- and what gs.player looks like right now,
+	# before attach_reality() runs, to tell "hydration didn't stick" from "attach
+	# swaps in a different object."
+	var diag_record: Dictionary = records.get(chosen_signature, {})
+	var diag_runtime: Variant = diag_record.get("runtime_ref", null) if typeof(diag_record) == TYPE_DICTIONARY else null
+	EraLog.truth(
+		"ERALIFE_LOAD_ATTACH_DIAGNOSTIC|chosen_signature=%s|gs_instance_id=%d|record_runtime_is_gamestate=%s|record_runtime_instance_id=%s|same_instance=%s|gs_player_age=%s|gs_player_bank=%s"
+		% [
+			chosen_signature,
+			gs.get_instance_id(),
+			str(diag_runtime is GameState),
+			str(diag_runtime.get_instance_id()) if diag_runtime is GameState else "N/A",
+			str(diag_runtime == gs),
+			str(gs.player.age) if gs.player != null else "N/A",
+			str(gs.player.bank_balance) if gs.player != null else "N/A"
+		]
+	)
+
+	# FIX: this originally skipped whenever ANYTHING was attached, on the
+	# assumption that a fresh boot always starts unattached. That's wrong the
+	# moment a life is already running and the player picks Continue or Load
+	# Game to switch to a different (or the same) save -- the manager is already
+	# attached to the PREVIOUS reality, so the skip left the screen showing the
+	# old life while the new one sat loaded-but-invisible underneath. Only skip
+	# when we're already attached to the specific record this load produced.
+	if str(manager.attached_signature).strip_edges() == chosen_signature:
+		EraLog.truth("ERALIFE_LOAD_ATTACH|skipped=already_attached|signature=%s" % chosen_signature)
 		return
 
 	# A record restored from disk cannot carry runtime_ref -- it is a live object
@@ -24973,7 +25061,7 @@ func _show_boxing_hub_panel(tab_id: String = "fight") -> void:
 	else:
 		payload = {
 			"success": false,
-			"text": "Boxing contract engine unavailable.",
+			"text": "Boxing isn't available right now.",
 			"sections": []
 		}
 
@@ -27875,8 +27963,8 @@ func _show_artifact_shop_panel() -> void:
 		and artifact_shop_status_label != null
 	):
 		artifact_shop_status_label.text = (
-			"Artifact reality is reconciling "
-			+ "behind this resident surface."
+			"The artifact shop is still "
+			+ "catching up. Give it a moment."
 		)
 
 	_claim_interactive_surface_authority(
@@ -27971,7 +28059,7 @@ func _refresh_artifact_shop_panel() -> void:
 		artifact_shop_status_label.text = str(
 			routed.get(
 				"reason",
-				"Artifact shop contract unavailable."
+				"The artifact shop isn't available."
 			)
 		)
 func _render_artifact_shop_contract(
@@ -28120,7 +28208,7 @@ func _render_artifact_shop_contract(
 		var empty_label:= Label.new()
 
 		empty_label.text = (
-			"The artifact shop is empty in this reality."
+			"The artifact shop is empty right now."
 		)
 		empty_label.add_theme_color_override(
 			"font_color",
@@ -29091,8 +29179,8 @@ func _render_artifact_shop_observation_packet(
 		var description:= Label.new()
 
 		description.text = (
-			"Artifacts publish from canonical catalog truth "
-			+ "as independent resident cards. Rarity and "
+			"Each artifact loads independently as its "
+			+ "own card. Rarity and "
 			+ "artifact aura remain distinct visual signals."
 		)
 
@@ -29134,7 +29222,7 @@ func _render_artifact_shop_observation_packet(
 		var catalog_meta:= Label.new()
 
 		catalog_meta.text = (
-			"%d canonical artifact slots • publishing live"
+			"%d artifact slots • updating live"
 			% int(
 				packet.get(
 					"catalog_slot_count",
@@ -29185,7 +29273,7 @@ func _render_artifact_shop_observation_packet(
 
 		if artifact_shop_status_label != null:
 			artifact_shop_status_label.text = (
-				"Publishing resident artifact catalog…"
+				"Loading the artifact catalog…"
 			)
 
 		set_meta(
@@ -29240,7 +29328,7 @@ func _render_artifact_shop_observation_packet(
 
 		if artifact_shop_status_label != null:
 			artifact_shop_status_label.text = (
-				"%d artifact contracts resident…"
+				"%d artifacts loaded…"
 				% grid.get_child_count()
 			)
 
@@ -29327,7 +29415,7 @@ func _render_artifact_shop_observation_packet(
 
 		if artifact_shop_status_label != null:
 			artifact_shop_status_label.text = (
-				"%d artifact contracts resident."
+				"%d artifacts loaded."
 				% int(
 					packet.get(
 						"stock_count",
@@ -30093,10 +30181,10 @@ func _commit_action_result_popup_choice_engine_call_deferred(
 				"success": true,
 				"popup_title": "Marriage Planner",
 				"popup_text": (
-					"The resident Partner surface is still publishing."
+					"The Partner tab is still loading."
 				),
 				"popup_footer": (
-					"Nothing is blocked. It will become observable when its contract arrives."
+					"Nothing is blocked. It'll be ready in a moment."
 				)
 			})
 
@@ -33349,8 +33437,8 @@ func _on_popup_viewer_contract_selected(
 
 		if popup_viewer.footer_label != null:
 			popup_viewer.footer_label.text = (
-				"That pending-situation view is not resident for "
-				+ "the currently controlled actor."
+				"That situation isn't available for "
+				+ "the character you're currently controlling."
 			)
 
 		EraLog.truth(
@@ -35489,8 +35577,7 @@ func _show_silk_road_trade_panel() -> void:
 		and silk_road_trade_status_label != null
 	):
 		silk_road_trade_status_label.text = (
-			"Caravan reality is publishing behind "
-			+ "this resident exchange."
+			"Loading the caravan trade data..."
 		)
 
 	_claim_interactive_surface_authority(
@@ -35583,8 +35670,7 @@ func _refresh_silk_road_trade_panel() -> void:
 		and not surface_hot
 	):
 		silk_road_trade_status_label.text = (
-			"Caravan reality is publishing behind "
-			+ "this resident exchange."
+			"Loading the caravan trade data..."
 		)
 
 	set_meta(
@@ -39158,7 +39244,7 @@ func _build_life_assets_standard_tab() -> void:
 	var total_assets: int = property_rows.size() + vehicle_rows.size()
 
 	_standard_tab_add_info_card("ASSET COMMAND", [
-		"Browse vehicles and holdings from one non-embedded wealth surface.",
+		"Browse all your vehicles and holdings in one place.",
 		"The left side now carries the live wealth rollup while the right side stays focused on direct asset control."
 	])
 
@@ -39255,7 +39341,7 @@ func _build_life_assets_standard_tab() -> void:
 
 	if total_assets == 0:
 		_standard_tab_add_section_header("Owned Assets")
-		_standard_tab_add_info_label("No controlled assets are currently owned. This surface stays active so markets and future wealth systems always have a home.")
+		_standard_tab_add_info_label("You don't own any assets yet. This tab stays active so markets and future wealth systems always have a home.")
 	else:
 		if not vehicle_rows.is_empty():
 			_standard_tab_add_section_header("Mobility Assets")
@@ -39324,7 +39410,7 @@ func _build_life_assets_standard_tab() -> void:
 				)
 
 	_standard_tab_add_section_header("Markets / Securities")
-	_standard_tab_add_info_label("Stocks, funds, commodities, crypto, businesses, and later wealth systems can plug into this same surface without changing asset routing.")
+	_standard_tab_add_info_label("Stocks, funds, commodities, crypto, businesses, and later wealth systems can plug into this same screen without changing how assets are handled.")
 
 func _era_asset_market_body_lines(_asset_kind: String, payload: Dictionary, status_text: String = "") -> Array:
 	var lines: Array = []
@@ -41232,8 +41318,8 @@ func _show_property_market_panel(
 			)
 		):
 			property_market_panel.status_label.text = (
-				"Property contracts are streaming into this "
-				+ "already-resident market surface."
+				"New listings are streaming into "
+				+ "the property market."
 			)
 
 		property_market_panel.set_meta(
@@ -41497,7 +41583,7 @@ func _refresh_property_market_panel(status_text: String = "", selected_template_
 		property_market_panel.render_surface_contract({
 			"success": false,
 			"title": "Property Market",
-			"subtitle": "No property market contract is available.",
+			"subtitle": "The property market isn't available right now.",
 			"listing_card_contracts": [],
 			"truth_state": "missing_surface_contract",
 			"ui_is_renderer_only": true
@@ -41969,10 +42055,10 @@ func _show_vehicle_market_panel(
 		):
 			vehicle_market_panel.subtitle_label.text = (
 				(
-					"Dealerships are publishing into this resident transportation lens."
+					"Dealerships are loading."
 					if selector_expected
 					else
-					"Available transportation is publishing live."
+					"Available transportation is updating live."
 				)
 			)
 
@@ -42001,10 +42087,10 @@ func _show_vehicle_market_panel(
 			)
 		):
 			vehicle_market_panel.status_label.text = (
-				"Dealership contracts are publishing live."
+				"Dealerships are updating live."
 				if selector_expected
 				else
-				"Transportation contracts are publishing live."
+				"Transportation listings are updating live."
 			)
 
 		vehicle_market_panel.set_meta(
@@ -42131,7 +42217,7 @@ func _ensure_assets_panel() -> void:
 		):
 			assets_panel.open_observable_partial(
 				gs.player,
-				"Asset truth is resident and resolving."
+				"Loading your assets..."
 			)
 			assets_panel.visible = false
 			assets_panel.mouse_filter = (
@@ -42185,7 +42271,7 @@ func _ensure_assets_panel() -> void:
 	):
 		assets_panel.open_observable_partial(
 			gs.player,
-			"Asset truth is resident and resolving."
+			"Loading your assets..."
 		)
 		assets_panel.visible = false
 		assets_panel.mouse_filter = (
@@ -43625,7 +43711,7 @@ func _recover_assets_panel_actor_lens_and_reveal(
 		(
 			status_text
 			if status_text.strip_edges() != ""
-			else "Asset truth is publishing live."
+			else "Loading your assets..."
 		)
 	)
 	assets_panel.visible = false
@@ -44150,7 +44236,7 @@ func _refresh_vehicle_market_panel(status_text: String = "", selected_template_i
 		vehicle_market_panel.render_surface_contract({
 			"success": false,
 			"title": "Vehicle Market",
-			"subtitle": "No vehicle market contract is available.",
+			"subtitle": "The vehicle market isn't available right now.",
 			"listing_card_contracts": [],
 			"truth_state": "missing_surface_contract",
 			"ui_is_renderer_only": true
@@ -45273,7 +45359,7 @@ func _refresh_meat_market_panel() -> void:
 		meat_market_panel.render_surface_contract({
 			"success": false,
 			"title": "Meat Market",
-			"subtitle": "No meat market contract is available.",
+			"subtitle": "The meat market isn't available right now.",
 			"basket": [],
 			"basket_total": 0,
 			"food_card_contracts": [],
@@ -46156,7 +46242,7 @@ func _on_relationship_hub_full_profile_pressed(
 			)
 		):
 			relationship_hub_panel.set_status(
-				"That prepared relationship target is no longer observable."
+				"That person is no longer available."
 			)
 
 		set_meta(
@@ -46264,7 +46350,7 @@ func _on_relationship_hub_full_profile_pressed(
 			"stats": [],
 			"profile_text": (
 				"===== PROFILE =====\n%s\n"
-				+ "This compatibility lens has no switch authority.\n"
+				+ "You can't take over this person's life from here.\n"
 				+ "==================="
 			) % _relationship_display_name(
 				target
@@ -46364,7 +46450,7 @@ func _on_relationship_hub_full_profile_pressed(
 			)
 		):
 			relationship_hub_panel.set_status(
-				"The resident relationship profile projection is not hot."
+				"Couldn't load that person's profile right now. Try again."
 			)
 
 		set_meta(
@@ -47410,7 +47496,7 @@ func _build_property_portfolio_asset_standard_tab() -> void:
 	)
 
 	_standard_tab_add_info_card(
-		"LIVE PROPERTY SURFACE",
+		"PROPERTY",
 		[
 			"You stand outside %s." % str(
 				standard_tab_popup_payload.get(
@@ -49083,7 +49169,7 @@ func _property_viewer_request_contract(
 			"property_id": asset_id,
 			"title": "PROPERTY SPACE",
 			"subtitle": "The property request was incomplete.",
-			"status_text": "CRR blocked an invalid property surface request.",
+			"status_text": "That property request wasn't valid.",
 			"floors": [],
 			"active_floor": 0,
 			"active_room": "entryway",
@@ -49302,12 +49388,12 @@ func _property_viewer_request_contract(
 		"property_owner_id": property_owner_id,
 		"property_id": asset_id,
 		"title": "PROPERTY SPACE",
-		"subtitle": "The property exists, but its surface contract could not be hydrated.",
+		"subtitle": "The property exists, but it couldn't be loaded.",
 		"status_text": (
 			resolved_status_text
 			if resolved_status_text != ""
 			else (
-				"CRR fallback: property surface contract failed to hydrate."
+				"That property couldn't be loaded. Try again."
 			)
 		),
 		"floors": [],
@@ -49627,10 +49713,10 @@ func _on_property_viewer_action_requested(
 				"success": false,
 				"popup_title": "Property Makeover",
 				"popup_text": (
-					"No property was attached to this makeover request."
+					"No property was found for this makeover request."
 				),
 				"popup_footer": (
-					"CRR blocked an invalid construction intent before mutation."
+					"That construction request wasn't valid."
 				)
 			})
 			return
@@ -49865,7 +49951,7 @@ func _commit_property_viewer_action_deferred(
 				else "The property interaction resolved."
 			),
 			"popup_footer": (
-				"The room remains resident behind this result."
+				"You're still in the room."
 			)
 		})
 
@@ -49914,7 +50000,7 @@ func _commit_property_viewer_action_deferred(
 			result_text
 			if result_text != ""
 			else (
-				"That route is not currently observable."
+				"That route isn't available right now."
 			)
 		)
 func _prewarm_property_spatial_audio_lane(
@@ -50940,7 +51026,7 @@ func _build_vehicle_portfolio_asset_standard_tab() -> void:
 		_standard_tab_add_info_label("That fleet asset is no longer available.")
 		return
 
-	_standard_tab_add_info_card("COMMAND SURFACE", [
+	_standard_tab_add_info_card("FLEET COMMAND", [
 		"Retask the operator, change the route, or pivot the trade role for this asset.",
 		"Each tap refreshes the same asset panel instead of dumping a one-line text response."
 	])
@@ -51500,14 +51586,14 @@ func _render_nearby_switch_shell_contract() -> void:
 	_clear_container_children(nearby_switch_list)
 
 	if nearby_switch_status_label != null:
-		nearby_switch_status_label.text = "Nearby lives are surfacing from a household-and-neighborhood contract."
+		nearby_switch_status_label.text = "Finding nearby lives you can switch to..."
 
 	var rows: Array = _nearby_switch_contract_snapshot_rows(36)
 	if rows.is_empty():
 		if nearby_switch_status_label != null:
 			nearby_switch_status_label.text = "Nearby lives are stabilizing. Try again in a moment."
 		var empty:= Label.new()
-		empty.text = "No switchable lives surfaced in the first contract snapshot."
+		empty.text = "No switchable lives found yet."
 		empty.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		nearby_switch_list.add_child(empty)
 		return
@@ -51738,7 +51824,7 @@ func _refresh_nearby_switch_popup_list() -> void:
 
 	if nearby_rows.is_empty():
 		if nearby_switch_status_label != null:
-			nearby_switch_status_label.text = "No neighbors or strangers surfaced in this contract snapshot." if not added_return_to_created_button else "No neighbors or strangers surfaced in this contract snapshot. You can still return to your created character."
+			nearby_switch_status_label.text = "No neighbors or strangers were found." if not added_return_to_created_button else "No neighbors or strangers were found. You can still return to your created character."
 		if not added_return_to_created_button:
 			var empty:= Label.new()
 			empty.text = "Nobody nearby is switchable right now."
@@ -52132,7 +52218,7 @@ func _ensure_other_countries_popup() -> void:
 	var status:= Label.new()
 	status.name = "Status"
 	status.text = (
-		"Realm surfaces are preparing in the resident observation lane."
+		"Countries and realms are loading..."
 	)
 	status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -52413,7 +52499,7 @@ func _open_other_countries_popup_shell_first() -> void:
 	if list == null:
 		if status != null:
 			status.text = (
-				"The resident realm-card deck is missing its list lens."
+				"The list of realms couldn't be displayed."
 			)
 		return
 
@@ -52524,11 +52610,11 @@ func _open_other_countries_popup_shell_first() -> void:
 
 	if status != null:
 		status.text = (
-			"Realm categories and cards are publishing live."
+			"Realm categories and cards are updating live."
 			if observation_queued
 			else (
-				"The current reality has not published "
-				+ "a World Browser identity yet."
+				"The World Browser hasn't loaded "
+				+ "for this world yet."
 			)
 		)
 
@@ -52785,7 +52871,7 @@ func _other_country_add_current_place_notice_to_standard_tab(presence: Dictionar
 	]
 
 	if bool(presence.get("rules_here", false)):
-		lines.append("You also currently rule here, so this surface is treated as your active seat of power.")
+		lines.append("You also currently rule here, so this place is treated as your active seat of power.")
 
 	_standard_tab_add_info_card("%s • CURRENT PLACE" % str(entry_name).to_upper(), lines)
 func _refresh_other_countries_popup_list() -> void:
@@ -55273,7 +55359,7 @@ func _on_world_browser_contract_ready(
 			if not live_keys.is_empty():
 				if status != null:
 					status.text = (
-						"%d countries and realms are resident."
+						"%d countries and realms loaded."
 						% entries.size()
 					)
 			else:
@@ -55438,7 +55524,7 @@ func _render_other_country_popup_entries(
 
 	if status != null:
 		status.text = (
-			"Countries and realms are resident. "
+			"Countries and realms are loaded. "
 			+ "Their cards are streaming into the same live grid."
 		)
 
@@ -55522,7 +55608,7 @@ func _continue_other_country_cached_live_stream(
 
 			if status != null:
 				status.text = (
-					"%d countries and realms are resident."
+					"%d countries and realms loaded."
 					% entries.size()
 				)
 
@@ -56191,7 +56277,7 @@ func _append_other_country_browser_row_resident_lens(
 			"description",
 			realm.get(
 				"description",
-				"A resident realm overview is available."
+				"An overview of this realm is available."
 			)
 		)
 	).strip_edges()
@@ -58309,8 +58395,7 @@ func _open_other_country_population_wall(
 
 			if unresolved_status != null:
 				unresolved_status.text = (
-					"%s has not published a stable realm identity "
-					+ "into the resident browser contract yet."
+					"%s hasn't finished loading yet."
 				) % entry_name
 
 			set_meta(
@@ -58587,7 +58672,7 @@ func _reset_romance_contract_scroll() -> void:
 func _show_other_country_romance_preference_popup(entry: Dictionary) -> void:
 	if entry.is_empty():
 		if world_actions_status_label != null:
-			world_actions_status_label.text = "That romance surface could not be resolved."
+			world_actions_status_label.text = "That romance option could not be resolved."
 		return
 
 	_ensure_romance_contract_popup()
@@ -59588,7 +59673,7 @@ func _show_other_country_overview(entry: Dictionary) -> void:
 	if popup_visible:
 		var status:= other_countries_popup.find_child("Status", true, false) as Label
 		if status != null:
-			status.text = "Click any country or realm to open a FULL overview. Interrealm authority appears first, imaginative realms surface beneath it, elemental realms gather below them, and ordinary realms stay below all special surfaces."
+			status.text = "Click any country or realm to open a FULL overview. Interrealm authority appears first, imaginative realms surface beneath it, elemental realms gather below them, and ordinary realms stay below all the special categories."
 		other_countries_popup.visible = false
 	_show_standard_tab_popup(
 		"%s • OVERVIEW" % entry_display_name.to_upper(),
@@ -59905,7 +59990,7 @@ func _build_other_country_overview_body_lines(payload: Dictionary) -> Array:
 	if bool(realm.get("visible_to_owner_only", false)):
 		lines.append("Visibility: Owner Only")
 	if bool(realm.get("hide_people_button", false)):
-		lines.append("Population Surface: Hidden")
+		lines.append("Population: Hidden")
 
 	var trade_rules: Dictionary = realm.get("trade_rules", {})
 	if typeof(trade_rules) == TYPE_DICTIONARY and not trade_rules.is_empty():
@@ -59958,7 +60043,7 @@ func _other_country_ordinary_overview_flavor(entry: Dictionary, realm: Dictionar
 			intro = "%s obeys the structure of government, but loyalty is not passion. The people are watching the throne closely." % entry_name
 
 	return {
-		"title": "%s Surface" % government_style,
+		"title": "%s" % government_style,
 		"intro": intro
 	}
 func _restart_terabithia_overview_marquee(clip_holder: Control, clip_shell: PanelContainer, marquee_track: Control, marquee_text_a: Label, marquee_text_b: Label, requested_visible_width: float, marquee_speed: float, marquee_track_height: float, marquee_text_y: float, imagination_ratio: float) -> void:
@@ -60311,7 +60396,7 @@ func _open_saved_life_picker(mode: String) -> void:
 			saved_life_picker_confirm_button.disabled = true
 		_:
 			saved_life_picker_title_label.text = "LOAD LINEAGE"
-			saved_life_picker_status_label.text = "Choose a saved lineage to hydrate."
+			saved_life_picker_status_label.text = "Choose a saved lineage to load."
 			saved_life_picker_confirm_button.visible = false
 			saved_life_picker_confirm_button.disabled = true
 
@@ -60396,7 +60481,7 @@ func _refresh_saved_life_picker_list() -> void:
 		return
 
 	if saved_life_picker_status_label != null:
-		saved_life_picker_status_label.text = "Choose a lineage to hydrate."
+		saved_life_picker_status_label.text = "Choose a lineage to load."
 
 	for raw_summary in lives:
 		if typeof(raw_summary) != TYPE_DICTIONARY:
@@ -60441,7 +60526,7 @@ func _refresh_saved_life_picker_list() -> void:
 
 		var button:= Button.new()
 		button.text = button_text
-		button.tooltip_text = "Hydrate this saved lineage as a parallel universe."
+		button.tooltip_text = "Load this saved lineage as a parallel universe."
 		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		button.custom_minimum_size = Vector2(0, 54)
 		button.disabled = path == ""
@@ -60557,7 +60642,7 @@ func _on_saved_life_picker_entry_pressed(
 
 	if saved_life_picker_status_label != null:
 		saved_life_picker_status_label.text = (
-			"Observing resident reality:\n%s"
+			"Loading:\n%s"
 			% clean_label
 		)
 
@@ -60568,7 +60653,7 @@ func _on_saved_life_picker_entry_pressed(
 		)
 	):
 		world_actions_status_label.text = (
-			"Observing %s as a resident reality..."
+			"Loading %s..."
 			% clean_label
 		)
 
@@ -71300,7 +71385,7 @@ func _render_bending_hub_tournament_loading_shell(reason: String = "tournaments"
 	loading_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	loading_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	loading_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	loading_label.text = "Tournament reality is resolving without blocking the UI.\n\nYou are inside the tournaments surface now — bracket truth, records, and stage controls are being streamed into this section."
+	loading_label.text = "Loading the tournament...\n\nYou're in the tournaments section now — brackets, records, and stage controls are being loaded in."
 	loading_margin.add_child(loading_label)
 
 	set_meta("bending_hub_tournament_loading_reason", reason)
@@ -77783,12 +77868,12 @@ func _drive_meat_market_surface_residency(
 func _copy_self_host_life_link() -> void:
 	if gs == null:
 		if world_actions_status_label != null:
-			world_actions_status_label.text = "No active runtime is available yet."
+			world_actions_status_label.text = "There's no life loaded to share yet."
 		return
 
 	if gs.game_state_contract_engine == null:
 		if world_actions_status_label != null:
-			world_actions_status_label.text = "Self-host contracts are not ready yet."
+			world_actions_status_label.text = "Self-hosting isn't ready yet."
 		return
 
 	var world_id:= "eralife-default-world"
@@ -77879,16 +77964,16 @@ func _on_copy_reality_capsule_link_pressed() -> void:
 
 	if world_feed_popup_capsule_label != null:
 		if self_host_enabled:
-			world_feed_popup_capsule_label.text = "Copied Self-Host Reality URL. Anyone with the link can request this exact life from your live EraLife node."
+			world_feed_popup_capsule_label.text = "Copied your self-hosted Life Link. Anyone with the link can load this exact life from your live game."
 		elif exact_cross_device:
 			if mode == "inline_large":
-				world_feed_popup_capsule_label.text = "Copied full Reality URL. It is large, but it contains the exact life, identity, timeline, and snapshot."
+				world_feed_popup_capsule_label.text = "Copied your full Life Link. It's large, but it contains the exact life, identity, timeline, and history."
 			else:
-				world_feed_popup_capsule_label.text = "Copied full Reality URL. Anyone with the link can load this exact life."
+				world_feed_popup_capsule_label.text = "Copied your full Life Link. Anyone with the link can load this exact life."
 		elif mode == "local_capsule_id":
-			world_feed_popup_capsule_label.text = "Copied local Reality Link. This capsule exists only on this device."
+			world_feed_popup_capsule_label.text = "Copied your Life Link. This save only exists on this device."
 		else:
-			world_feed_popup_capsule_label.text = "Copied Reality Link."
+			world_feed_popup_capsule_label.text = "Copied Life Link."
 
 
 func _build_current_reality_capsule_id() -> String:
@@ -79344,7 +79429,7 @@ func _on_belongings_property_resident_action_pressed(
 
 			if belongings_item_popup_subtitle != null:
 				belongings_item_popup_subtitle.text = (
-					"Spatial truth is publishing. You still have full control."
+					"Loading the destination. You still have full control."
 				)
 
 			call_deferred(
@@ -79385,7 +79470,7 @@ func _on_belongings_property_resident_action_pressed(
 
 			if belongings_item_popup_subtitle != null:
 				belongings_item_popup_subtitle.text = (
-					"Makeover truth is publishing. You still have full control."
+					"Loading the makeover. You still have full control."
 				)
 
 			call_deferred(
@@ -95601,12 +95686,12 @@ func _show_crown_war_preview_from_contract(
 		crown_action_popup_body.append_text(
 			(
 				"[center][font_size=22][b]%s[/b][/font_size][/center]\n\n"
-				+ "[center]Military, treasury, alliance, and diplomatic matchup "
-				+ "truth is publishing live.[/center]\n\n"
-				+ "[center][color=#AEB9D6]The declaration door is available "
+				+ "[center]Loading the military, treasury, alliance, "
+				+ "and diplomatic matchup.[/center]\n\n"
+				+ "[center][color=#AEB9D6]Declaring war is available "
 				+ "because you hold sovereign war authority. "
-				+ "The reality mutation remains locked until the immutable "
-				+ "WarContractEngine preview arrives.[/color][/center]"
+				+ "It stays locked until the full war preview "
+				+ "finishes loading.[/color][/center]"
 			)
 			% pending_defender_name
 		)
@@ -107217,7 +107302,7 @@ func _queue_crown_war_intent_from_renderer(
 ) -> void:
 	if crown_hub_status_label != null:
 		crown_hub_status_label.text = (
-			"War reality is committing without taking control away from you…"
+			"Declaring war — you still have full control…"
 		)
 
 	set_meta(
@@ -117177,6 +117262,32 @@ func _checkpoint_resume_published_main_tab_contracts_for_actor(
 	)
 	var merged: Dictionary = {}
 
+	# DIAGNOSTIC: the projection engine builds and writes the correct prison
+	# relationships contract (confirmed: active_section=cellmate, incarceration
+	# marker present), but this function's own output still comes back as the
+	# normal family surface. Report this function's OWN gs instance and exactly
+	# what it reads straight out of the by-actor registry for "relationships",
+	# before any merge logic touches it, to catch a wrong-instance read outright.
+	var diag_by_actor: Dictionary = MainSceneHelpers._safe_dictionary(
+		gs.scenario_state.get("resident_main_tab_surface_contracts_by_actor", {})
+	)
+	var diag_packet: Dictionary = MainSceneHelpers._safe_dictionary(
+		diag_by_actor.get(actor_key, {})
+	)
+	var diag_relationships: Dictionary = MainSceneHelpers._safe_dictionary(
+		diag_packet.get("relationships", {})
+	)
+	EraLog.truth(
+		"ERALIFE_MERGE_SOURCE_CHECK|gs_instance_id=%d|by_actor_has_key=%s|packet_keys=%s|relationships_active_section=%s|relationships_has_incarceration_lens=%s"
+		% [
+			gs.get_instance_id(),
+			str(diag_by_actor.has(actor_key)),
+			str(diag_packet.keys()),
+			str(diag_relationships.get("active_section_id", "-")),
+			str(diag_relationships.has("incarceration_lens"))
+		]
+	)
+
 	for registry_name in [
 		"resident_main_tab_surface_contracts_by_actor",
 		"resident_control_switch_support_surface_packet_by_actor",
@@ -117492,7 +117603,7 @@ func _set_checkpoint_resume_nav_destination_ready(
 		button.tooltip_text = ""
 	else:
 		button.tooltip_text = (
-			"Live truth is publishing into this surface."
+			"Still loading. Try again in a moment."
 		)
 
 	button.set_meta(
@@ -124355,6 +124466,20 @@ func _commit_crime_hub_action_background(
 			action_result
 		)
 
+	# DIAGNOSTIC: pins whether this handler is even reached with the exact
+	# mode string the branch below checks for. If action_mode never actually
+	# equals "weapon_crime_action_committed" here, the whole branch (and the
+	# pre-existing belongings_hud_content_dirty / crime_commit_* flags, not
+	# just the new pending_situations_dirty line) silently never runs.
+	if action_mode.find("crime") != -1 or action_mode.find("weapon") != -1:
+		EraLog.truth(
+			"ERALIFE_CRIME_ACTION_MODE_CHECK|action_mode=%s|matches_branch=%s"
+			% [
+				action_mode,
+				str(action_mode == "weapon_crime_action_committed")
+			]
+		)
+
 	if action_mode == "weapon_crime_action_committed":
 		belongings_hud_content_dirty = true
 
@@ -124364,6 +124489,30 @@ func _commit_crime_hub_action_background(
 		)
 		set_meta(
 			"crime_commit_stats_delta_observation_requested",
+			true
+		)
+
+		# FIX: Brandon killed someone and never saw a jail/interrogation
+		# pending situation. The crime interrogation contract itself does
+		# activate correctly -- confirmed via the universal
+		# ERALIFE_POPUP_CONTRACT_ACTIVATED probe in
+		# ScenarioRuntimeContractEngine.gd:activate_popup_contract(), firing
+		# with category=crime right after the commit. But unlike every
+		# other path that creates a pending situation (which routes through
+		# _emit_pending_popup_contract_from_action_result() and sets
+		# "pending_situations_dirty" there), the crime pipeline activates
+		# its interrogation contract directly from CrimeContractEngine /
+		# PendingSituationsEngine, never through that wrapper -- so the flag
+		# this branch's sibling block (crime_commit_pending_surface_refresh_
+		# requested, crime_commit_stats_delta_observation_requested) already
+		# exists for never got a matching entry for the Pending Situations
+		# sidebar badge specifically. _update_pending_situations_button()
+		# only runs when this flag (or an actor change) is set, so the
+		# badge silently stayed stale -- same "publish but nobody told the
+		# UI to re-observe" shape as several other bugs already fixed in
+		# this project.
+		set_meta(
+			"pending_situations_dirty",
 			true
 		)
 
@@ -136071,6 +136220,20 @@ func _drive_pending_situations_runtime(
 	):
 		return
 
+	# DIAGNOSTIC: confirms this loop keeps actually running (not just being
+	# called) across a long uninteracted stretch, and what the engine's
+	# payload looks like each time it does. Pairs with
+	# ERALIFE_PENDING_SITUATIONS_SEED in PendingSituationsEngine.gd.
+	EraLog.truth(
+		"ERALIFE_PENDING_SITUATIONS_RUNTIME_TICK|actor_id=%d|actor_changed=%s|dirty=%s|now_ms=%d"
+		% [
+			actor_id,
+			str(actor_changed),
+			str(dirty),
+			now_ms
+		]
+	)
+
 
 
 
@@ -147387,8 +147550,7 @@ func _refresh_god_mode_start_button_state() -> void:
 		_set_god_mode_prewarm_progress(
 			1.0,
 			(
-				"Reality prewarmed. The room exists. "
-				+ "Ready opens the door."
+				"Your world is ready. Press Ready to begin."
 			),
 			true
 		)
@@ -153596,6 +153758,59 @@ func _install_checkpoint_resume_main_tab_surface_contract(
 	)
 	var surface_hot: bool = false
 
+	# FIX: whatever the deck handed to this function was, by the time it gets here
+	# it's proven unreliable for an incarcerated actor -- confirmed via direct
+	# tracing that a correctly-built, prison-aware "relationships" contract gets
+	# built and persisted, and this function still receives the normal family
+	# surface instead. Rather than continue chasing the exact cross-contamination
+	# in the resident chassis pool, re-derive the truth right here, at the last
+	# possible moment before install, using the same incarceration check the
+	# builder itself already uses. If the actor is incarcerated, this always wins.
+	if (
+		gs != null
+		and actor_id > 0
+		and clean_surface_id in [
+			"relationships",
+			"school",
+			"activities",
+			"career"
+		]
+		and gs.reality_projection_contract_engine != null
+		and gs.reality_projection_contract_engine.has_method(
+			"_resident_incarceration_surface"
+		)
+		and gs.has_method(
+			"get_npc_by_id"
+		)
+	):
+		var incarceration_actor: Variant = gs.get_npc_by_id(
+			actor_id
+		)
+
+		if incarceration_actor != null:
+			var incarceration_override: Dictionary = (
+				MainSceneHelpers._safe_dictionary(
+					gs.reality_projection_contract_engine.call(
+						"_resident_incarceration_surface",
+						gs,
+						incarceration_actor,
+						clean_surface_id
+					)
+				)
+			)
+
+			if not incarceration_override.is_empty():
+				EraLog.truth(
+					"ERALIFE_INSTALL_INCARCERATION_OVERRIDE|surface=%s|actor_id=%d|deck_active_section=%s|override_active_section=%s"
+					% [
+						clean_surface_id,
+						actor_id,
+						str(contract.get("active_section_id", "-")),
+						str(incarceration_override.get("active_section_id", "-"))
+					]
+				)
+				contract = incarceration_override
+
 	match clean_surface_id:
 		"relationships":
 			# DIAGNOSTIC: the resume contract now carries all five surfaces
@@ -153652,6 +153867,25 @@ func _install_checkpoint_resume_main_tab_surface_contract(
 				relationship_hub_panel != null
 				and is_instance_valid(relationship_hub_panel)
 			):
+				# FIX: the panel's own section-build queue silently drops every
+				# section forever if its "required world year" doesn't match the
+				# section's embedded year -- confirmed via
+				# ERALIFE_RELATIONSHIP_SECTION_YEAR_REJECT showing queued=97 vs
+				# required=79. That required-year meta gets set once, at the very
+				# first character-creation boot, and a checkpoint resume never
+				# refreshes it, so every section for a loaded save's real year gets
+				# rejected as "stale" forever, no matter how many times the tab is
+				# revisited. Refresh it here, right before installing, so it matches
+				# the actual resumed reality instead of the original boot's year.
+				relationship_hub_panel.set_meta(
+					"resident_required_actor_id",
+					actor_id
+				)
+				relationship_hub_panel.set_meta(
+					"resident_required_world_year",
+					int(gs.year) if gs != null else -999999
+				)
+
 				relationship_hub_panel.render_contract(contract)
 				relationship_hub_panel_active_actor_id = actor_id
 				relationships_hub_active_section_id = str(
@@ -155105,7 +155339,7 @@ func _continue_title_card_current_life() -> void:
 			signature
 		):
 			_finish_failed_life_load(
-				"The resident Life-shell container is missing."
+				"That save couldn't be loaded. Its saved life data is missing."
 			)
 			return
 
@@ -158579,7 +158813,7 @@ func _mark_god_mode_reality_shape_changed(reason: String = "god_mode_change") ->
 
 	_set_god_mode_prewarm_progress(
 		0.0,
-		"Reality shape changed. Pre warm the world seed when this loadout is final.",
+		"Your settings changed. Pre warm the world seed when this loadout is final.",
 		false
 	)
 
@@ -158922,18 +159156,27 @@ func _set_god_mode_prewarm_progress(
 				"World seed prewarmed"
 			)
 			god_mode_prewarm_button.tooltip_text = (
-				"The canonical world seed is ready. "
+				"The world seed is ready. "
 				+ "Use the main \"I'm ready to play "
 				+ "EraLife\" button below to enter."
 			)
 		elif clamped_progress > 0.0:
+			# FIX: this used to hardcode "Prewarming your reality..." for the
+			# entire duration regardless of what stage was actually running --
+			# this is the exact button Brandon was watching and reporting as
+			# "stuck" on a generic message, while clean_status_text (the real
+			# per-stage detail, e.g. "Please wait, loading background
+			# people...") was only ever reaching a separate status label he
+			# wasn't looking at. Show the live text here too.
 			god_mode_prewarm_button.text = (
-				"Prewarming your reality..."
+				clean_status_text
+				if clean_status_text != ""
+				else "Prewarming your life..."
 			)
 			god_mode_prewarm_button.tooltip_text = (
 				"Your curated God Mode loadout is "
 				+ "being converted into one playable "
-				+ "reality capsule."
+				+ "life."
 			)
 		else:
 			god_mode_prewarm_button.text = (
@@ -158941,7 +159184,7 @@ func _set_god_mode_prewarm_progress(
 			)
 			god_mode_prewarm_button.tooltip_text = (
 				"Commit the current God Mode loadout, "
-				+ "create one canonical world seed, and "
+				+ "create a world seed, and "
 				+ "prewarm the playable birth capsule."
 			)
 
@@ -158965,6 +159208,25 @@ func _set_god_mode_prewarm_progress(
 			household_creator_status_label.text = (
 				clean_status_text
 			)
+
+	# FIX: this is the button Brandon is actually watching when entering a
+	# new life -- it got set to a single static "Prewarming your reality..."
+	# string once, when the prewarm kicked off (see the other call site of
+	# this exact literal), and never updated again. Meanwhile this function
+	# was correctly updating a *different* status label/progress bar the
+	# whole time (confirmed via ERALIFE_PREWARM_BAR showing the right
+	# per-stage text, like "Please wait, loading background people..."), so
+	# the live detail never reached the text the player was actually looking
+	# at. Mirror the same live per-stage text onto this button too, while
+	# it's in that disabled "still working" state.
+	if (
+		god_mode_start_button != null
+		and is_instance_valid(god_mode_start_button)
+		and god_mode_start_button.disabled
+		and not is_ready
+		and clean_status_text != ""
+	):
+		god_mode_start_button.text = clean_status_text
 
 	set_meta(
 		"god_mode_prewarm_progress_render_only",
@@ -158998,23 +159260,23 @@ func _refresh_god_mode_prewarm_controls(can_start: bool, prewarm_ready: bool, pr
 			god_mode_prewarm_button.disabled = true
 			god_mode_prewarm_button.text = "World seed prewarmed"
 			god_mode_prewarm_button.self_modulate = Color(1.0, 1.0, 1.0, 0.82)
-			god_mode_prewarm_button.tooltip_text = "The canonical world seed is ready. Use the main \"I'm ready to play EraLife\" button below to enter."
+			god_mode_prewarm_button.tooltip_text = "The world seed is ready. Use the main \"I'm ready to play EraLife\" button below to enter."
 		elif prewarm_pending or prewarm_running:
-			god_mode_prewarm_button.text = "Prewarming your reality..."
+			god_mode_prewarm_button.text = "Prewarming your life..."
 			god_mode_prewarm_button.self_modulate = Color(1.0, 0.96, 0.82, 0.86)
 			god_mode_prewarm_button.tooltip_text = "EraLife is building the playable birth capsule from this exact God Mode loadout."
 		elif can_start:
 			god_mode_prewarm_button.text = "Pre warm world seed"
 			god_mode_prewarm_button.self_modulate = Color(1.0, 1.0, 1.0, 1.0)
-			god_mode_prewarm_button.tooltip_text = "Lock this curated identity into one canonical world seed."
+			god_mode_prewarm_button.tooltip_text = "Lock this curated identity into one world seed."
 		elif not valid_last_name:
 			god_mode_prewarm_button.text = "Enter a last name first"
 			god_mode_prewarm_button.self_modulate = Color(1.0, 1.0, 1.0, 0.72)
-			god_mode_prewarm_button.tooltip_text = "A valid last name is required before the reality seed can be committed."
+			god_mode_prewarm_button.tooltip_text = "A valid last name is required before the world seed can be committed."
 		elif not valid_year:
 			god_mode_prewarm_button.text = "Enter a valid birth year first"
 			god_mode_prewarm_button.self_modulate = Color(1.0, 1.0, 1.0, 0.72)
-			god_mode_prewarm_button.tooltip_text = "A valid birth year is required before the reality seed can be committed."
+			god_mode_prewarm_button.tooltip_text = "A valid birth year is required before the world seed can be committed."
 	if god_mode_prewarm_progress_bar != null and is_instance_valid(god_mode_prewarm_progress_bar):
 		if prewarm_ready:
 			god_mode_prewarm_progress_bar.value = 1.0
@@ -159022,13 +159284,13 @@ func _refresh_god_mode_prewarm_controls(can_start: bool, prewarm_ready: bool, pr
 			god_mode_prewarm_progress_bar.value = 0.0
 	if god_mode_prewarm_status_label != null and is_instance_valid(god_mode_prewarm_status_label):
 		if prewarm_ready:
-			god_mode_prewarm_status_label.text = "Reality prewarmed. The main entry button below is now unlocked."
+			god_mode_prewarm_status_label.text = "World seed prewarmed. The main entry button below is now unlocked."
 		elif prewarm_pending or prewarm_running:
-			god_mode_prewarm_status_label.text = "Prewarming your reality from the committed God Mode loadout."
+			god_mode_prewarm_status_label.text = "Prewarming your life from the committed God Mode loadout."
 		elif can_start:
 			god_mode_prewarm_status_label.text = "Press Pre warm world seed when this life shape is final."
 		else:
-			god_mode_prewarm_status_label.text = "Finish the required identity fields before prewarming your reality."
+			god_mode_prewarm_status_label.text = "Finish the required identity fields before prewarming your life."
 
 func _on_god_mode_prewarm_world_seed_pressed() -> void:
 	if god_mode_viewer == null or not is_instance_valid(god_mode_viewer):
@@ -160224,7 +160486,7 @@ func _household_creator_render_world_setup() -> void:
 		return
 
 	var intro:= Label.new()
-	intro.text = "First, shape the household world seed. Era, house type, reality mode, class, year, country, and city are all part of the creation contract."
+	intro.text = "First, shape the household world seed. Era, house type, reality mode, class, year, country, and city are all part of this household's setup."
 	intro.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	intro.add_theme_font_size_override("font_size", 15)
 	intro.add_theme_color_override("font_color", Color(1.0, 0.76, 0.66, 0.94))
@@ -160428,7 +160690,7 @@ func _on_household_world_prewarm_pressed() -> void:
 
 	if not bool(validation.get("success", false)):
 		if household_creator_status_label != null and is_instance_valid(household_creator_status_label):
-			household_creator_status_label.text = str(validation.get("reason", "World contract invalid."))
+			household_creator_status_label.text = str(validation.get("reason", "This household setup isn't valid."))
 		return
 
 	_household_creator_begin_prewarm_feedback()
@@ -160461,7 +160723,7 @@ func _on_household_world_prewarm_pressed() -> void:
 			household_creator_status_label.text = "World seed was not created. Check Godot output."
 		return
 
-	_household_creator_set_prewarm_feedback(0.72, "Stabilizing reality...")
+	_household_creator_set_prewarm_feedback(0.72, "Stabilizing the world...")
 	await get_tree().process_frame
 
 	world_contract ["world_seed"] = world_seed
@@ -160992,7 +161254,7 @@ func _on_household_member_save_pressed() -> void:
 	var validation: Dictionary = _household_creator_validate_member_basic(member)
 	if not bool(validation.get("success", false)):
 		if household_creator_status_label != null and is_instance_valid(household_creator_status_label):
-			household_creator_status_label.text = str(validation.get("reason", "Member contract invalid."))
+			household_creator_status_label.text = str(validation.get("reason", "This family member isn't valid."))
 		return
 
 	var stats: Dictionary = _household_creator_collect_member_stats()
@@ -166979,7 +167241,7 @@ func _queue_god_mode_life_prewarm_from_settings(
 
 	_set_god_mode_prewarm_progress(
 		0.16,
-		"Committing the resident world, identity, and family contract.",
+		"Locking in the world, identity, and family.",
 		false
 	)
 
@@ -167031,7 +167293,7 @@ func _queue_god_mode_life_prewarm_from_current_ui(reason: String = "god_mode_cha
 		set_meta("god_mode_life_prewarm_running", false)
 		_set_god_mode_prewarm_progress(
 			0.0,
-			str(prewarm_contract.get("reason", "God Mode panel could not emit a prewarm contract.")),
+			str(prewarm_contract.get("reason", "God Mode couldn't prepare this life. Try again.")),
 			false
 		)
 		_refresh_god_mode_start_button_state()
@@ -167045,7 +167307,7 @@ func _queue_god_mode_life_prewarm_from_current_ui(reason: String = "god_mode_cha
 		set_meta("god_mode_life_prewarm_running", false)
 		_set_god_mode_prewarm_progress(
 			0.0,
-			"God Mode panel emitted a prewarm contract, but the settings payload was empty.",
+			"God Mode prepared this life, but no settings came with it.",
 			false
 		)
 		_refresh_god_mode_start_button_state()
@@ -167060,14 +167322,14 @@ func _queue_god_mode_life_prewarm_from_current_ui(reason: String = "god_mode_cha
 	if queue_report.is_empty() or not bool(queue_report.get("success", false)):
 		_set_god_mode_prewarm_progress(
 			0.0,
-			str(queue_report.get("reason", "God Mode prewarm contract could not be queued.")),
+			str(queue_report.get("reason", "Couldn't queue this life for prewarm.")),
 			false
 		)
 		_refresh_god_mode_start_button_state()
 		return
 
 	if god_mode_start_button != null and is_instance_valid(god_mode_start_button):
-		god_mode_start_button.text = "Prewarming your reality..."
+		god_mode_start_button.text = "Prewarming your life..."
 		god_mode_start_button.disabled = true
 		god_mode_start_button.self_modulate = Color(1.0, 0.96, 0.82, 0.86)
 func _run_queued_god_mode_life_prewarm(signature: String, reason: String = "god_mode_change") -> void:
@@ -167243,7 +167505,7 @@ func _run_queued_god_mode_life_prewarm_deferred(
 			str(
 				residency_report.get(
 					"reason",
-					"Resident reality reservation failed."
+					"Couldn't reserve a slot for this life."
 				)
 			),
 			false
@@ -167907,7 +168169,7 @@ func _observe_reality_residency_frame(
 			str(
 				attach_report.get(
 					"reason",
-					"Resident runtime could not attach."
+					"This new life couldn't be loaded. Please try again."
 				)
 			),
 			false
@@ -167949,7 +168211,7 @@ func _observe_reality_residency_frame(
 			str(
 				status_report.get(
 					"reason",
-					"Resident runtime construction failed."
+					"Setting up this new life failed. Please try again."
 				)
 			),
 			false
@@ -168092,7 +168354,7 @@ func _residency_stage_label(
 		"engine:"
 	):
 		return (
-			"Keeping runtime authority %s resident."
+			"Keeping %s running smoothly."
 			% clean_stage.trim_prefix(
 				"engine:"
 			).replace(
@@ -168105,7 +168367,7 @@ func _residency_stage_label(
 		"projection:"
 	):
 		return (
-			"Precomposing the %s contract graph."
+			"Preparing %s."
 			% clean_stage.trim_prefix(
 				"projection:"
 			).replace(
@@ -168117,32 +168379,32 @@ func _residency_stage_label(
 	return str(
 		{
 			"apply_reality_settings": (
-				"Binding the selected world contract."
+				"Applying your world settings."
 			),
 			"spawn_shell_population": (
-				"Attaching the observable population shell."
+				"Please wait, loading background people..."
 			),
 			"create_player_identity": (
-				"Attaching the playable identity anchor."
+				"Creating your character."
 			),
 			"apply_birth_contracts": (
-				"Committing birth and household contracts."
+				"Setting up your birth and household."
 			),
 			"place_resident_population": (
-				"Connecting resident lives to world-space truth."
+				"Placing everyone in the world."
 			),
 			"seed_first_frame_truth": (
-				"Sealing the first observable reality frame."
+				"Finalizing the opening scene."
 			),
 			"seal_resident_reality": (
-				"Verifying the resident snapshot."
+				"Double-checking everything is in place."
 			),
 			"complete": (
-				"Resident reality is ready to attach."
+				"Your new life is ready."
 			)
 		}.get(
 			clean_stage,
-			"Advancing persistent runtime residency."
+			"Finishing up..."
 		)
 	)
 func _run_queued_god_mode_life_prewarm_main_thread_capsule(
@@ -168390,8 +168652,8 @@ func _apply_god_mode_life_prewarm_thread_report(
 	_set_god_mode_prewarm_progress(
 		0.92,
 		(
-			"Resident player and family are bound. "
-			+ "Sealing the first visible Life room."
+			"Your player and family are set. "
+			+ "Finalizing the first room you'll see."
 		),
 		false
 	)
@@ -168494,10 +168756,10 @@ func _apply_god_mode_life_prewarm_thread_report(
 			0.94,
 			(
 				(
-					"The resident player and family are ready, "
-					+ "but the first-visible Life shell gate "
-					+ "did not seal. Missing contracts: %s. "
-					+ "Main-tab input hot: %s."
+					"Your player and family are ready, "
+					+ "but the first room didn't finish "
+					+ "loading. Still missing: %s. "
+					+ "Input ready: %s."
 				)
 				% [
 					str(
@@ -168517,9 +168779,9 @@ func _apply_god_mode_life_prewarm_thread_report(
 	_set_god_mode_prewarm_progress(
 		1.0,
 		(
-			"Resident reality, player, family, and first "
-			+ "visible Life shell are ready. Optional "
-			+ "projections remain detached from the door."
+			"Your world, player, family, and first "
+			+ "room are ready. Some optional details "
+			+ "are still loading in the background."
 		),
 		true
 	)
@@ -168528,7 +168790,7 @@ func _show_household_start_selection_panel() -> void:
 	var prewarmed_raw: Variant = get_meta("god_mode_life_prewarmed_gs", null)
 	if not (prewarmed_raw is GameState):
 		if household_creator_status_label != null and is_instance_valid(household_creator_status_label):
-			household_creator_status_label.text = "Household prewarm finished, but no valid GameState capsule was returned."
+			household_creator_status_label.text = "Household prewarm finished, but something went wrong preparing your new life."
 		return
 
 	var prewarmed_gs: GameState = prewarmed_raw as GameState
@@ -168680,7 +168942,7 @@ func _on_household_start_candidate_pressed(local_key: String) -> void:
 			var activation_report: Dictionary = prewarmed_gs.activate_custom_household_start(local_key)
 			if not bool(activation_report.get("success", false)):
 				if household_creator_status_label != null and is_instance_valid(household_creator_status_label):
-					household_creator_status_label.text = str(activation_report.get("reason", "Could not activate household start actor."))
+					household_creator_status_label.text = str(activation_report.get("reason", "Could not activate that household's starting character."))
 				return
 
 	household_creator_pending_settings = settings.duplicate(true)
@@ -168744,7 +169006,7 @@ func _prewarm_god_mode_life_from_settings(settings: Dictionary, reason: String =
 	set_meta("god_mode_life_prewarm_signature", signature)
 	_set_god_mode_prewarm_progress(
 		0.44,
-		"Canonical seed locked. Hydrating the player before the surrounding world...",
+		"World seed locked in. Loading your character before the surrounding world...",
 		false
 	)
 
@@ -168812,7 +169074,7 @@ func _prewarm_god_mode_life_from_settings(settings: Dictionary, reason: String =
 
 	_set_god_mode_prewarm_progress(
 		0.58,
-		"Reality settings hydrated. Building the offscreen birth capsule...",
+		"World settings loaded. Building your new life offscreen...",
 		false
 	)
 	prewarm_gs.initialize()
@@ -168837,7 +169099,7 @@ func _prewarm_god_mode_life_from_settings(settings: Dictionary, reason: String =
 		return {
 			"success": false,
 			"mode": "stale_prewarm_discarded",
-			"reason": "God Mode loadout changed while the reality was prewarming.",
+			"reason": "God Mode loadout changed while this life was prewarming.",
 			"signature": signature
 		}
 
@@ -168917,7 +169179,7 @@ func _prewarm_god_mode_life_from_settings(settings: Dictionary, reason: String =
 
 	_set_god_mode_prewarm_progress(
 		1.0,
-		"Reality prewarmed. Your curated universe is ready to enter.",
+		"Life prewarmed. Your curated universe is ready to enter.",
 		true
 	)
 	_refresh_god_mode_start_button_state()
@@ -171765,7 +172027,7 @@ func _on_god_mode_start_random_life_pressed() -> void:
 	if god_mode_start_random_life_button != null and is_instance_valid(god_mode_start_random_life_button):
 		god_mode_start_random_life_button.disabled = true
 		god_mode_start_random_life_button.text = "Entering EraLife..."
-		god_mode_start_random_life_button.tooltip_text = "Building and entering a random prewarmed EraLife reality."
+		god_mode_start_random_life_button.tooltip_text = "Building and entering a random prewarmed EraLife."
 		god_mode_start_random_life_button.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 	if god_mode_start_button != null and is_instance_valid(god_mode_start_button):
@@ -171775,7 +172037,7 @@ func _on_god_mode_start_random_life_pressed() -> void:
 
 	_set_god_mode_prewarm_progress(
 		1.0 if _is_god_mode_life_prewarm_ready_for_settings(settings) else 0.16,
-		"Entering EraLife..." if _is_god_mode_life_prewarm_ready_for_settings(settings) else "Prewarming a random EraLife reality...",
+		"Entering EraLife..." if _is_god_mode_life_prewarm_ready_for_settings(settings) else "Prewarming a random EraLife...",
 		_is_god_mode_life_prewarm_ready_for_settings(settings)
 	)
 
@@ -171832,7 +172094,7 @@ func _enter_random_god_mode_life_from_ready_prewarm(signature: String, reason: S
 
 	set_meta("god_mode_random_life_start_after_prewarm_requested", false)
 	set_meta("god_mode_capsule_entry_handoff_active", false)
-	_restore_god_mode_start_button_after_failed_entry("Random life prewarm was marked ready, but its hot capsule could not be consumed.")
+	_restore_god_mode_start_button_after_failed_entry("Random life prewarm was marked ready, but it couldn't be loaded.")
 func _begin_zero_frame_ui_render_enforcement(reason: String = "zero_frame_ui", hold_ms: int = 1200) -> void:
 	var now_ms: int = int(Time.get_ticks_msec())
 	var until_ms: int = now_ms + max(250, hold_ms)
@@ -172609,7 +172871,7 @@ func _on_god_mode_viewer_prewarm_requested(
 
 	_set_god_mode_prewarm_progress(
 		0.02,
-		"Selecting a resident reality.",
+		"Selecting a world to enter.",
 		false
 	)
 
@@ -172644,7 +172906,7 @@ func _execute_god_mode_viewer_residency_request(
 	if engine == null:
 		_set_god_mode_prewarm_progress(
 			0.0,
-			"God Mode contract authority is unavailable.",
+			"God Mode isn't available right now.",
 			false
 		)
 		return
@@ -172760,7 +173022,7 @@ func _execute_god_mode_viewer_residency_request(
 			0.0,
 			(
 				"Prewarming rejected an invalid world seed "
-				+ "before residency construction began."
+				+ "before the new life could be built."
 			),
 			false
 		)
@@ -172926,7 +173188,7 @@ func _execute_god_mode_viewer_residency_request(
 			str(
 				emit_report.get(
 					"reason",
-					"Reality residency contract was rejected."
+					"That world setup was rejected."
 				)
 			),
 			false
@@ -172955,7 +173217,7 @@ func _execute_god_mode_viewer_residency_request(
 			str(
 				queue_report.get(
 					"reason",
-					"Resident reality could not be selected."
+					"That world could not be selected."
 				)
 			),
 			false
@@ -174406,8 +174668,8 @@ func _stage_god_mode_playable_surface_for_zero_frame_entry(
 	_set_god_mode_prewarm_progress(
 		0.92,
 		(
-			"Resident player and family are ready. "
-			+ "Composing the first visible life shell."
+			"Your player and family are ready. "
+			+ "Putting together the first scene you'll see."
 		),
 		false
 	)
@@ -178578,7 +178840,7 @@ func _open_prewarmed_life_door_from_god_mode_contract(settings: Dictionary, sign
 func _enqueue_god_mode_handoff_runtime_contract(handoff_contract: Dictionary, reason: String = "god_mode_handoff") -> void:
 	if handoff_contract.is_empty() or not bool(handoff_contract.get("success", false)):
 		_restore_god_mode_start_button_after_failed_entry(
-			str(handoff_contract.get("reason", "Invalid God Mode handoff contract."))
+			str(handoff_contract.get("reason", "Something went wrong handing off this new life."))
 		)
 		return
 
@@ -178753,7 +179015,7 @@ func _consume_god_mode_panel_handoff_contract_after_panel_termination(handoff_co
 			return
 
 		_restore_god_mode_start_button_after_failed_entry(
-			str(handoff_contract.get("reason", "Invalid God Mode handoff contract."))
+			str(handoff_contract.get("reason", "Something went wrong handing off this new life."))
 		)
 		return
 
@@ -178768,7 +179030,7 @@ func _consume_god_mode_panel_handoff_contract_after_panel_termination(handoff_co
 			set_meta("god_mode_handoff_runtime_contract_queue_pending", false)
 			return
 
-		_restore_god_mode_start_button_after_failed_entry("God Mode handoff contract was empty.")
+		_restore_god_mode_start_button_after_failed_entry("God Mode's handoff came back empty.")
 		return
 
 	var settings_raw: Variant = contract.get("settings", handoff_contract.get("settings", {}))
@@ -178782,7 +179044,7 @@ func _consume_god_mode_panel_handoff_contract_after_panel_termination(handoff_co
 			set_meta("god_mode_handoff_runtime_contract_queue_pending", false)
 			return
 
-		_restore_god_mode_start_button_after_failed_entry("God Mode handoff contract had no settings payload.")
+		_restore_god_mode_start_button_after_failed_entry("God Mode's handoff had no settings with it.")
 		return
 
 	var signature: String = str(contract.get("signature", handoff_contract.get("signature", ""))).strip_edges()
@@ -178795,7 +179057,7 @@ func _consume_god_mode_panel_handoff_contract_after_panel_termination(handoff_co
 			set_meta("god_mode_handoff_runtime_contract_queue_pending", false)
 			return
 
-		_restore_god_mode_start_button_after_failed_entry("God Mode handoff contract had no signature.")
+		_restore_god_mode_start_button_after_failed_entry("God Mode's handoff was missing its signature.")
 		return
 
 	_sever_god_mode_runtime_authority("consume_god_mode_panel_handoff_contract_after_panel_termination")
@@ -178848,7 +179110,7 @@ func _consume_god_mode_panel_handoff_contract_after_panel_termination(handoff_co
 
 	if not _is_god_mode_life_prewarm_ready_for_settings(settings):
 		_restore_god_mode_start_button_after_failed_entry(
-			"The handoff contract was emitted, but the matching prewarmed capsule was not ready."
+			"The handoff was sent, but the matching prewarmed life wasn't ready."
 		)
 		return
 
@@ -178884,7 +179146,7 @@ func _consume_god_mode_panel_handoff_contract_after_panel_termination(handoff_co
 
 	_abort_god_mode_tracker_handoff("god_mode_runtime_firewall_contract_consumer_failed")
 	_restore_god_mode_start_button_after_failed_entry(
-		"The God Mode panel emitted a handoff contract, but the hot runtime capsule could not be consumed."
+		"God Mode sent the handoff, but the prewarmed life couldn't be loaded."
 	)
 func _schedule_god_mode_start_life_entry_after_button_paint(handoff_started_ms: int = 0) -> void:
 	if bool(get_meta("god_mode_start_life_entry_after_button_paint_connected", false)):
@@ -178952,7 +179214,7 @@ func _run_god_mode_start_life_entry_after_button_paint(_handoff_started_ms: int 
 
 	_abort_god_mode_tracker_handoff("god_mode_start_hot_capsule_missing_after_paint")
 	_restore_god_mode_start_button_after_failed_entry(
-		"The world seed prewarm was marked ready, but the hot runtime capsule was missing. Press Pre warm world seed again."
+		"The world seed prewarm was marked ready, but the prewarmed life was missing. Press Pre warm world seed again."
 	)
 func _enter_prewarmed_god_mode_life_full_ui_now(settings: Dictionary, reason: String = "god_mode_start_button") -> bool:
 	if not _is_god_mode_life_prewarm_ready_for_settings(settings):
@@ -181674,8 +181936,8 @@ func _ensure_persistent_main_tab_renderer_chassis(
 			)
 			world_feed_popup_feed.append_text(
 				(
-					"World reality is resident. "
-					+ "Its current projection will bind "
+					"The world is already loaded here. "
+					+ "It'll stay in sync "
 					+ "without rebuilding this room."
 				)
 			)
@@ -181747,8 +182009,8 @@ func _ensure_persistent_main_tab_renderer_chassis(
 		):
 			career_hub_panel.subtitle_label.text = (
 				(
-					"Professional reality is resident. "
-					+ "Actor truth binds continuously."
+					"Your career details are already loaded here. "
+					+ "They stay up to date automatically."
 				)
 			)
 
@@ -181792,8 +182054,8 @@ func _ensure_persistent_main_tab_renderer_chassis(
 		):
 			activities_hub_panel.subtitle_label.text = (
 				(
-					"Activities reality is resident. "
-					+ "Available actions bind continuously."
+					"Your activities are already loaded here. "
+					+ "Available actions stay up to date automatically."
 				)
 			)
 
@@ -182815,8 +183077,8 @@ func _on_mini_game_intent_requested(
 			mini_game_panel.reveal_pending_observation(
 				"games",
 				(
-					"Arcade surface is live. "
-					+ "Resident games are publishing now."
+					"The arcade is open. "
+					+ "Games are loading now."
 				),
 				false
 			)
@@ -183020,8 +183282,8 @@ func _commit_mini_game_intent_deferred(
 					result.get(
 						"reason",
 						(
-							"The committed MiniGame intent did not "
-							+ "return an observable surface."
+							"That didn't open a game. "
+							+ "Please try again."
 						)
 					)
 				)
@@ -183637,6 +183899,70 @@ func _input(event):
 	if event == null:
 		return
 
+	# DIAGNOSTIC: Brandon reports that clicking empty background (not a
+	# button) sometimes leaves buttons visually animated but unresponsive
+	# to clicks afterward, self-resolving after a few seconds of clicking.
+	# This codebase has dozens of independent dim/modal overlay Controls
+	# (relationship profile popup, exit confirm modal, boxing entry popup,
+	# grocery aisle carousel, etc.) that toggle mouse_filter between STOP
+	# and IGNORE -- a classic cause of this exact symptom is one of them
+	# being left at MOUSE_FILTER_STOP (and/or still visible with alpha 0)
+	# after it should have gone back to IGNORE, silently absorbing clicks
+	# everywhere on screen. gui_get_hovered_control() reports whichever
+	# Control is actually claiming the mouse position at click time, which
+	# will name the stuck overlay directly if that's what's happening.
+	if (
+		event is InputEventMouseButton
+		and event.pressed
+	):
+		var hovered_diag: Control = (
+			get_viewport().gui_get_hovered_control()
+		)
+
+		EraLog.truth(
+			"ERALIFE_CLICK_HOVER_DIAG|button=%d|pos=%s|hovered_path=%s|hovered_class=%s|mouse_filter=%s|visible=%s|modulate_a=%s"
+			% [
+				int(
+					event.button_index
+				),
+				str(
+					event.position
+				),
+				(
+					str(
+						hovered_diag.get_path()
+					)
+					if hovered_diag != null
+					else "null"
+				),
+				(
+					hovered_diag.get_class()
+					if hovered_diag != null
+					else "n/a"
+				),
+				(
+					str(
+						hovered_diag.mouse_filter
+					)
+					if hovered_diag != null
+					else "n/a"
+				),
+				(
+					str(
+						hovered_diag.visible
+					)
+					if hovered_diag != null
+					else "n/a"
+				),
+				(
+					str(
+						hovered_diag.modulate.a
+					)
+					if hovered_diag != null
+					else "n/a"
+				)
+			]
+		)
 
 
 
@@ -186290,6 +186616,21 @@ func _drive_age_up_projection_pump(
 
 
 func _deferred_run_age_up_from_button() -> void:
+	# DIAGNOSTIC: age-up never reaches ERALIFE_AGE_UP_BOUNDARY while the player is
+	# incarcerated, even though the button press itself registers cleanly. Report
+	# unconditional entry into the physics-frame-deferred handler, before any
+	# early return, so we can tell whether it fires at all.
+	EraLog.truth(
+		"ERALIFE_DEFERRED_AGE_UP_ENTRY|gs_null=%s|player_null=%s|frame=%d|gs_instance_id=%d|life_engine_null=%s"
+		% [
+			str(gs == null),
+			str(gs == null or gs.player == null),
+			int(Engine.get_process_frames()),
+			gs.get_instance_id() if gs != null else -1,
+			str(gs == null or gs.life_engine == null)
+		]
+	)
+
 	if (
 		gs == null
 		or gs.player == null
@@ -186316,6 +186657,14 @@ func _deferred_run_age_up_from_button() -> void:
 
 	remove_meta(
 		"age_up_pending_temporal_intent"
+	)
+
+	EraLog.truth(
+		"ERALIFE_DEFERRED_AGE_UP_PENDING|pending_empty=%s|frame=%d"
+		% [
+			str(pending.is_empty()),
+			int(Engine.get_process_frames())
+		]
 	)
 
 	if pending.is_empty():
@@ -186359,7 +186708,7 @@ func _deferred_run_age_up_from_button() -> void:
 		"age_up_temporal_simulation_lease"
 	)
 
-	if not _global_runtime_kill_claim_allowed(
+	var age_up_kill_claim_allowed: bool = _global_runtime_kill_claim_allowed(
 		"busy",
 		"Mainscene._deferred_run_age_up_from_button",
 		"age_up_temporal_simulation_lease",
@@ -186375,7 +186724,17 @@ func _deferred_run_age_up_from_button() -> void:
 			"ui_is_pure_renderer": true,
 			"commit_required_before_log": true
 		}
-	):
+	)
+
+	EraLog.truth(
+		"ERALIFE_DEFERRED_AGE_UP_KILL_CLAIM|allowed=%s|frame=%d"
+		% [
+			str(age_up_kill_claim_allowed),
+			int(Engine.get_process_frames())
+		]
+	)
+
+	if not age_up_kill_claim_allowed:
 		set_meta(
 			"age_up_transition_busy",
 			false
@@ -186515,6 +186874,17 @@ func _deferred_run_age_up_from_button() -> void:
 		)
 	)
 
+	EraLog.truth(
+		"ERALIFE_DEFERRED_AGE_UP_ROUTE|route_empty=%s|route_success=%s|route_failed=%s|age_result_empty=%s|route_reason=%s"
+		% [
+			str(route_result.is_empty()),
+			str(route_result.get("success", "MISSING")),
+			str(route_failed),
+			str(age_result.is_empty()),
+			str(route_result.get("reason", "-"))
+		]
+	)
+
 	# FIX: nothing re-projected the interactive main-tab surfaces after an age-up.
 	# begin_resident_projection()'s reuse branch returns the existing projection
 	# whenever the actor is unchanged, so the surface deck built at world start was
@@ -186579,6 +186949,86 @@ func _deferred_run_age_up_from_button() -> void:
 			)
 		):
 			gs.crime_engine.reduce_prison_time()
+
+			# FIX: reduce_prison_time() -> PrisonEngine.yearly_tick_actor() queues a
+			# "Release" popup via queue_year_resolution_popup(), onto
+			# gs.pending_year_resolution_popups. The only function that ever drained
+			# that queue (_build_year_resolution_popup_chain() in LifeEngine.gd) sits
+			# on the old, non-zero-frame year-resolution path this build never runs --
+			# confirmed via diagnostic logging: ERALIFE_YEAR_POPUP_QUEUED fires every
+			# release, the drain function's own probes never fire once. Show it
+			# directly here instead, through the same generic popup path every other
+			# simple "tap to continue" notice in this scene already uses.
+			if gs.has_method("pop_next_year_resolution_popup"):
+				var year_resolution_popup: Dictionary = gs.pop_next_year_resolution_popup()
+				if not year_resolution_popup.is_empty():
+					call_deferred(
+						"_maybe_show_action_result_popup",
+						year_resolution_popup
+					)
+
+			# FIX: the relationships panel's "required world year" freshness gate only
+			# ever got refreshed once, inside the resume install path -- every ordinary
+			# age-up after that left it pointing at the resume year. It stayed harmless
+			# while incarcerated because the prison-surface override bypasses the gate
+			# entirely, but the moment a sentence ends and the panel falls back to the
+			# normal relationships hub build, that build hits the same stale-year
+			# rejection "mods" hit earlier: pending forever, confirmed via
+			# ERALIFE_PROJECTION_STEP showing "relationships" flip to pending=true right
+			# at the release tick, which is exactly what stalled the age-up pump at its
+			# 600-pass cap and left you unable to age up again. Keep it in sync every
+			# single age-up, not just at resume.
+			if (
+				relationship_hub_panel != null
+				and is_instance_valid(relationship_hub_panel)
+			):
+				relationship_hub_panel.set_meta(
+					"resident_required_actor_id",
+					int(gs.player.id)
+				)
+				relationship_hub_panel.set_meta(
+					"resident_required_world_year",
+					int(gs.year)
+				)
+
+			# FIX: reduce_prison_time() correctly updates years_served/years_remaining
+			# on the engine side every year (confirmed: _publish_prison_facility_residency
+			# refreshes resident_prison_reality_by_actor on every tick), but nothing
+			# after intake/release ever tells the Sentence tab to re-fetch it -- same
+			# root cause as the resume install gap, just recurring every year instead of
+			# once. Re-install the sentence/facility surfaces here too, straight after
+			# the tick, so the screen actually advances.
+			if gs.player != null:
+				var age_up_reattach_actor_id: int = int(gs.player.id)
+				var age_up_custody_contract: Dictionary = {}
+
+				if (
+					gs.prison_engine != null
+					and gs.prison_engine.has_method("resident_prison_reality_contract")
+				):
+					age_up_custody_contract = MainSceneHelpers._safe_dictionary(
+						gs.prison_engine.call(
+							"resident_prison_reality_contract",
+							age_up_reattach_actor_id
+						)
+					)
+
+				if (
+					age_up_custody_contract.is_empty()
+					and gs.jail_engine != null
+					and gs.jail_engine.has_method("resident_jail_reality_contract")
+				):
+					age_up_custody_contract = MainSceneHelpers._safe_dictionary(
+						gs.jail_engine.call(
+							"resident_jail_reality_contract",
+							age_up_reattach_actor_id
+						)
+					)
+
+				if not age_up_custody_contract.is_empty():
+					_install_incarceration_resident_surfaces(
+						age_up_custody_contract
+					)
 
 		# Claim the transition lock. Released ONLY in
 		# _finish_age_up_projection_pump(), which every pump exit path routes
@@ -186865,8 +187315,8 @@ func _world_feed_shell_contract_packet(reason: String = "world_shell") -> Dictio
 	if gs != null and gs.player != null:
 		lines.append("Current life: %s" % MainSceneHelpers._get_person_display_name(gs.player))
 
-	lines.append("World UI opened from a shell-first contract.")
-	lines.append("Reality, realms, bending history, spawn events, and deeper world truth refresh after the panel is visible.")
+	lines.append("World info is loading.")
+	lines.append("Reality Mode, realms, bending history, and spawn events will fill in once this panel is visible.")
 	lines.append("======================")
 
 	return {
@@ -186877,7 +187327,7 @@ func _world_feed_shell_contract_packet(reason: String = "world_shell") -> Dictio
 		"surface_type": "panel",
 		"layout": "scroll_list",
 		"title": "WORLD",
-		"subtitle": "Shell-first world feed contract.",
+		"subtitle": "World feed is loading.",
 		"theme_id": "world",
 		"data": {
 			"lines": lines,
@@ -191509,7 +191959,7 @@ func _relationship_profile_ensure_switch_button_surfaced(target: Person, target_
 	if not target_alive:
 		relationship_profile_popup_switch_button.tooltip_text = "Dead NPCs cannot be switched into."
 	elif not switch_shell_hot:
-		relationship_profile_popup_switch_button.tooltip_text = "Switch lens is staging. The button unlocks when this actor's life shell is ready."
+		relationship_profile_popup_switch_button.tooltip_text = "Getting ready to switch. This unlocks once their life is ready to view."
 	else:
 		relationship_profile_popup_switch_button.tooltip_text = ""
 	relationship_profile_popup_switch_button.set_meta("relationship_profile_core_button", true)
@@ -191797,7 +192247,7 @@ func _commit_relationship_profile_zero_frame_switch_now(
 	if typeof(viewer_packet_raw) != TYPE_DICTIONARY:
 		if relationship_profile_popup_status != null:
 			relationship_profile_popup_status.text = (
-				"%s's PlayableLifeViewer packet was missing."
+				"%s's life couldn't be loaded."
 				% target_name
 			)
 		return false
@@ -191809,7 +192259,7 @@ func _commit_relationship_profile_zero_frame_switch_now(
 	if viewer_packet.is_empty():
 		if relationship_profile_popup_status != null:
 			relationship_profile_popup_status.text = (
-				"%s's PlayableLifeViewer packet was missing."
+				"%s's life couldn't be loaded."
 				% target_name
 			)
 		return false
@@ -191825,7 +192275,7 @@ func _commit_relationship_profile_zero_frame_switch_now(
 	if typeof(surface_contract_raw) != TYPE_DICTIONARY:
 		if relationship_profile_popup_status != null:
 			relationship_profile_popup_status.text = (
-				"%s's surface shell was missing."
+				"%s's life couldn't be loaded."
 				% target_name
 			)
 		return false
@@ -191837,7 +192287,7 @@ func _commit_relationship_profile_zero_frame_switch_now(
 	if surface_contract.is_empty():
 		if relationship_profile_popup_status != null:
 			relationship_profile_popup_status.text = (
-				"%s's surface shell was missing."
+				"%s's life couldn't be loaded."
 				% target_name
 			)
 		return false
@@ -191855,7 +192305,7 @@ func _commit_relationship_profile_zero_frame_switch_now(
 	if pointer_revision == "":
 		if relationship_profile_popup_status != null:
 			relationship_profile_popup_status.text = (
-				"%s's prepared pointer revision was missing."
+				"%s's life wasn't fully prepared yet."
 				% target_name
 			)
 		return false
@@ -192168,7 +192618,7 @@ func _commit_relationship_profile_pointer_switch_fallback_now(
 
 	if relationship_profile_popup_status != null:
 		relationship_profile_popup_status.text = (
-			"%s's prepared life packet is not hot yet."
+			"%s's life isn't ready to switch to yet."
 			% MainSceneHelpers._person_display_name_for_identity_switch(
 				target
 			)
@@ -195907,7 +196357,7 @@ func _on_relationship_profile_panel_switch_requested(
 			)
 		):
 			relationship_profile_panel.set_status(
-				"That prepared life is no longer observable."
+				"That person is no longer available."
 			)
 
 		set_meta(
@@ -195991,16 +196441,15 @@ func _on_relationship_profile_panel_switch_requested(
 			if waiting_for_authority_packet:
 				relationship_profile_panel.set_status(
 					(
-						"This viewpoint is still preparing its "
-						+ "UniversalSwitch destination packet. "
-						+ "No switch work was run on press."
+						"This view is still preparing to switch. "
+						+ "Nothing happened when you pressed."
 					)
 				)
 			else:
 				relationship_profile_panel.set_status(
 					(
-						"This viewpoint was not prepared with the "
-						+ "relationship surface. No switch was attempted."
+						"This view wasn't ready to switch from. "
+						+ "Nothing happened."
 					)
 				)
 
@@ -208516,7 +208965,7 @@ func _make_relationship_browser_action_button(label: String, action_id: String, 
 		btn.disabled = not switch_intent_allowed
 		btn.mouse_filter = Control.MOUSE_FILTER_STOP if switch_intent_allowed else Control.MOUSE_FILTER_IGNORE
 		btn.focus_mode = Control.FOCUS_ALL if switch_intent_allowed else Control.FOCUS_NONE
-		btn.tooltip_text = "" if switch_shell_hot else "Switch lens is staging. The button unlocks when this actor's life shell is ready."
+		btn.tooltip_text = "" if switch_shell_hot else "Getting ready to switch. This unlocks once their life is ready to view."
 		btn.set_meta("switch_zero_frame_packet_hot", switch_shell_hot)
 		btn.set_meta("switch_pointer_fallback_allowed", false)
 		btn.set_meta("switch_button_is_intent_door_not_packet_gate", true)
@@ -208580,7 +209029,7 @@ func _open_relationship_profile_for_person_id(
 			)
 		):
 			relationship_hub_panel.set_status(
-				"That relationship profile is not currently observable."
+				"Couldn't load that person's profile right now. Try again."
 			)
 		return
 
@@ -213601,7 +214050,7 @@ func _on_relationship_hub_panel_person_requested(
 			)
 		):
 			relationship_hub_panel.set_status(
-				"That relationship target is not currently observable."
+				"That person is no longer available."
 			)
 		return
 
@@ -216048,7 +216497,7 @@ func _institution_hub_add_person_button(npc: Person, prefix: String = "", suffix
 		open_btn.tooltip_text = (
 			""
 			if profile_contract_hot
-			else "This profile contract is not currently observable."
+			else "Still loading — try again in a moment."
 		)
 		open_btn.set_meta(
 			"relationship_profile_contract_hot",
@@ -222498,7 +222947,7 @@ func _open_institution_tab_zero_frame_door(
 		panel.prepare_observable_actor_shell(
 			actor_id,
 			(
-				"%s truth is publishing live."
+				"Loading %s..."
 				% clean_kind.capitalize()
 			)
 		)
@@ -226200,7 +226649,7 @@ func _prime_native_main_tab_renderable_surface(
 							mod_menu_active_section_id
 						),
 						"status_text": (
-							"Mod Hub reality is observable."
+							"Mod Hub is ready."
 						),
 						"source": (
 							"%s_mod_menu_authoritative_prime"
@@ -227974,6 +228423,33 @@ func _install_incarceration_resident_surfaces(
 			surface_id
 		] = surface_contract.duplicate(false)
 
+		# FIX: an ordinary live conviction has no checkpoint/residency
+		# signature, so the signature-gated route below never fires and
+		# the freshly-built prison relationships surface (guards, cellmate,
+		# other inmates) never reaches the panel -- it just sits cached.
+		# Install it directly here, the same way the checkpoint-resume
+		# path already does at its own render_contract() call, so guards
+		# and inmates actually show up the moment incarceration starts.
+		if surface_id == "relationships":
+			_ensure_relationship_hub_panel()
+
+			if (
+				relationship_hub_panel != null
+				and is_instance_valid(
+					relationship_hub_panel
+				)
+			):
+				relationship_hub_panel.render_contract(
+					surface_contract
+				)
+				relationship_hub_panel_active_actor_id = actor_id
+				relationships_hub_active_section_id = str(
+					surface_contract.get(
+						"active_section_id",
+						"cellmate"
+					)
+				).strip_edges().to_lower()
+
 		if install_signature == "":
 			continue
 
@@ -228424,7 +228900,7 @@ func _install_incarceration_other_facilities_surface(
 
 	if cards.is_empty():
 		var empty:= Label.new()
-		empty.text = "No other facilities are currently known to this reality."
+		empty.text = "No other facilities are known about yet."
 		empty.horizontal_alignment = (
 			HORIZONTAL_ALIGNMENT_CENTER
 		)

@@ -253,6 +253,23 @@ func _execute_sentence(
 		)
 	).strip_edges().to_lower()
 
+	# DIAGNOSTIC: ERALIFE_PRISON_INTAKE_ROW never fires, meaning
+	# PrisonEngine.execute_sentence() never gets reached. Report the actual
+	# sentence type and duration arriving here, and whether execution_flags
+	# survived onto this case object, to find where the chain forks away
+	# from ever reaching the prison engine.
+	EraLog.truth(
+		"ERALIFE_CASE_EXECUTE_SENTENCE|case_id=%s|sentence_type=%s|duration=%d|has_execution_flags=%s|jail_engine_present=%s|prison_engine_present=%s"
+		% [
+			str(next_case.get("case_id", "-")),
+			sentence_type,
+			int(sentence.get("duration", -1)),
+			str(next_case.has("execution_flags")),
+			str(gs.jail_engine != null),
+			str(gs.prison_engine != null)
+		]
+	)
+
 	if sentence_type in [
 		"prison",
 		"execution"
@@ -1224,6 +1241,20 @@ func resolve_pending_crime_response(
 		)
 	)
 
+	# DIAGNOSTIC: the pending->investigating->interrogation fix below appears
+	# to not be taking effect. Report the exact raw status this function sees
+	# on entry, and whether this case_id is even found in `cases` at all.
+	EraLog.truth(
+		"ERALIFE_RESOLVE_RESPONSE_ENTRY|case_id=%s|found_in_cases=%s|raw_status=[%s]|response_id=%s|interrogation_stage=%d"
+		% [
+			case_id,
+			str(cases.has(case_id)),
+			str(case_data.get("status", "MISSING_KEY")),
+			response_id,
+			interrogation_stage
+		]
+	)
+
 	if case_data.is_empty():
 		return {
 			"success": false,
@@ -1251,6 +1282,30 @@ func resolve_pending_crime_response(
 			"reason": "actor_is_not_case_accused"
 		}
 
+	# FIX: this only ever bumped "investigating" -> "interrogation". If a case
+	# reached interrogation while still "pending" (the crime-discovery step
+	# never advanced it to "investigating" first), the case stays "pending"
+	# through the whole interrogation sequence and the later "charged"
+	# transition at the end of this function silently fails validation --
+	# advance_case() returns the case unchanged and nothing here checks that,
+	# so booking and the live trial queue run against a case still stuck at
+	# "pending", which the trial queue correctly (and silently) refuses.
+	# Confirmed live via ERALIFE_LIVE_TRIAL_QUEUE logging status=pending.
+	if str(
+		case_data.get(
+			"status",
+			"pending"
+		)
+	) == "pending":
+		case_data = advance_case(
+			case_data,
+			"investigating",
+			{
+				"source": "pending_situations_engine.interrogation_fallback",
+				"interrogation_stage": interrogation_stage
+			}
+		)
+
 	if str(
 		case_data.get(
 			"status",
@@ -1265,6 +1320,16 @@ func resolve_pending_crime_response(
 				"interrogation_stage": interrogation_stage
 			}
 		)
+
+	# DIAGNOSTIC: report the status after both fix-branch advance_case()
+	# calls above have had their chance to run.
+	EraLog.truth(
+		"ERALIFE_RESOLVE_RESPONSE_POST_FIX|case_id=%s|status_after_fix=[%s]"
+		% [
+			case_id,
+			str(case_data.get("status", "MISSING_KEY"))
+		]
+	)
 
 	var evidence_packet: Dictionary = _safe_dictionary(
 		case_data.get(
@@ -2119,6 +2184,21 @@ func _queue_live_crime_trial(
 	case_data: Dictionary,
 	requested_stage: int = -1
 ) -> Dictionary:
+	# DIAGNOSTIC: a case can sit in jail for years with no visible trial
+	# popup. Report every entry into the single choke point every trial
+	# progression has to pass through, so we can tell whether this is being
+	# called at all, and what status/branch it takes each time.
+	EraLog.truth(
+		"ERALIFE_LIVE_TRIAL_QUEUE|actor=%d|case_id=%s|status=%s|pretrial_ack=%s|requested_stage=%d"
+		% [
+			int(actor.id) if actor != null else -1,
+			str(case_data.get("case_id", "-")),
+			str(case_data.get("status", "-")),
+			str(bool(case_data.get("pretrial_disposition_acknowledged", false))),
+			requested_stage
+		]
+	)
+
 	if (
 		actor == null
 		or case_data.is_empty()
@@ -2727,6 +2807,19 @@ func resolve_live_crime_trial_choice(
 	choice: Dictionary,
 	_committed: Dictionary
 ) -> Dictionary:
+	# DIAGNOSTIC: ERALIFE_FINALIZE_LIVE_TRIAL never fires either. Report
+	# every real entry into a trial-choice resolution, with the stage and
+	# choice id, to find whether this is reached at all and where it stalls.
+	EraLog.truth(
+		"ERALIFE_LIVE_TRIAL_CHOICE|case_id=%s|stage=%s|choice_id=%s|actor=%d"
+		% [
+			str(scenario.get("case_id", "-")),
+			str(scenario.get("trial_stage", -1)),
+			str(choice.get("id", "-")),
+			int(actor.id) if actor != null else -1
+		]
+	)
+
 	if (
 		actor == null
 		or gs == null
@@ -3161,6 +3254,17 @@ func resolve_live_crime_trial_choice(
 func _finalize_live_crime_trial(
 	case_data: Dictionary
 ) -> Dictionary:
+	# DIAGNOSTIC: ERALIFE_CASE_EXECUTE_SENTENCE never fires on a fresh
+	# conviction. Report whether this finalize function is even reached, and
+	# whether its dependencies are present.
+	EraLog.truth(
+		"ERALIFE_FINALIZE_LIVE_TRIAL|case_id=%s|justice_system_engine_present=%s"
+		% [
+			str(case_data.get("case_id", "-")),
+			str(gs != null and gs.justice_system_engine != null)
+		]
+	)
+
 	if (
 		case_data.is_empty()
 		or gs == null
@@ -3175,6 +3279,16 @@ func _finalize_live_crime_trial(
 		gs.justice_system_engine.evaluate_case(
 			case_data
 		)
+	)
+
+	EraLog.truth(
+		"ERALIFE_LIVE_TRIAL_VERDICT|case_id=%s|verdict_success=%s|outcome=%s|sentence_type=%s"
+		% [
+			str(case_data.get("case_id", "-")),
+			str(bool(verdict_report.get("success", false))),
+			str(_safe_dictionary(verdict_report.get("verdict", {})).get("outcome", "-")),
+			str(_safe_dictionary(_safe_dictionary(verdict_report.get("verdict", {})).get("sentence", {})).get("type", "-"))
+		]
 	)
 
 	if not bool(

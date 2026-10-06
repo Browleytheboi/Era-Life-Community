@@ -149,7 +149,7 @@ func commit_vehicle_contract_action(
 			"schema": ACTION_CONTRACT_SCHEMA,
 			"version": CONTRACT_VERSION,
 			"reason": "missing_actor",
-			"text": "No vehicle actor was provided."
+			"text": "No driver was specified."
 		}
 
 	var asset_id: int = int(

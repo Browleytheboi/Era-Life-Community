@@ -208,8 +208,8 @@ func emit_observable_contract(
 			context.get(
 				"status_text",
 				(
-					"Mod reality is observable while marketplace "
-					+ "and provider truth reconcile."
+					"Loading mods — syncing with the "
+					+ "marketplace..."
 				)
 			)
 		),

@@ -1657,7 +1657,7 @@ func _status_text(snapshot: Dictionary, section_id: String) -> String:
 			+ "ScenarioEngine owns approaches."
 		)
 
-	return "School reality is live. Tabs reveal resident projections."
+	return "Use the tabs to see different areas of the school."
 
 func _school_option_catalog_revision(
 	snapshot: Dictionary
@@ -2127,7 +2127,7 @@ func _observable_partial(actor: Person, reason: String, context: Dictionary = {}
 		"actor_id": int(actor.id) if actor != null else -1,
 		"actor_name": _person_name(actor),
 		"title": "SCHOOL HUB",
-		"subtitle": "School reality is reconnecting.",
+		"subtitle": "Reconnecting to the school...",
 		"header_chip_text": "OBSERVABLE PARTIAL",
 		"active_section_id": _section(str(context.get("active_section_id", "overview"))),
 		"tabs": _tabs("overview", "Communal / Lunch Area"),

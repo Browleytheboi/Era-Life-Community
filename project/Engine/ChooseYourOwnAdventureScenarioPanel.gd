@@ -102,9 +102,9 @@ func present(result: Dictionary) -> void:
 	if opps.is_empty():
 		_add_choice_card({
 			"choice_id": "open_adventure_catalog",
-			"label": "No action contracts surfaced yet",
-			"text": "The current story node did not expose choices.",
-			"overview": "This fallback keeps the panel recoverable instead of trapping the player.",
+			"label": "No Choices Right Now",
+			"text": "This part of the story doesn't have any choices yet.",
+			"overview": "Head back to the adventure list and try again.",
 			"display_kind": "action_card",
 			"accent": "#B56BFF",
 			"emoji": "↩"

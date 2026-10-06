@@ -173,5 +173,5 @@ func _error_result(message: String) -> Dictionary:
 		"subtitle": "Route unavailable",
 		"text": message,
 		"opps": [],
-		"footer_text": "The contract-driven adventure route could not start."
+		"footer_text": "This adventure route could not start."
 	}

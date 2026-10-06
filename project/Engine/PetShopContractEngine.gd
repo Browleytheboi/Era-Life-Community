@@ -1977,8 +1977,8 @@ func _find_listing(
 	return {}
 func _shop_subtitle() -> String:
 	if _mythical_allowed():
-		return "Animals and mythical companions route into the same canonical relationship graph."
-	return "Companions route into the same canonical relationship graph as people."
+		return "Animals and mythical companions become part of your relationships, just like people."
+	return "Companions become part of your relationships, just like people."
 
 func _mythical_allowed() -> bool:
 	return gs != null and gs.mythical_contract_engine != null and gs.mythical_contract_engine.has_method("mythical_allowed_for_current_reality") and gs.mythical_contract_engine.mythical_allowed_for_current_reality()

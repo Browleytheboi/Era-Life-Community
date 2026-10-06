@@ -1722,7 +1722,7 @@ static func _observable_asset_market_surface_contract(gs: GameState,
 		),
 		"title": market_label,
 		"subtitle": (
-			"Authoritative %s market truth is publishing."
+			"Loading the %s market..."
 			% clean_market_kind
 		),
 		"era": era_name,

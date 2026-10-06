@@ -1189,7 +1189,7 @@ func _perform_activity(
 		return _failure(
 			"missing_game_state",
 			(
-				"Activities reality is not available "
+				"Activities aren't available "
 				+ "right now."
 			)
 		)

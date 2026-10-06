@@ -1488,6 +1488,31 @@ func buy_weapon_from_context(
 			}
 		)
 
+		# FIX: Brandon reported buying a shotgun from Rick's Weapon Shop, then
+		# finding no weapons listed when choosing "USE WEAPON" in the Crime &
+		# Justice panel. Traced it to CrimeHubContractEngine.gd:
+		# _crime_section_surface() -- the function both the Weapons tab and
+		# the weapon picker call -- checking its own cache
+		# (section_surfaces_by_actor) BEFORE recomputing, and the weapon-
+		# picker handler (open_crime_weapon_picker) calls it without
+		# force_recompose. If the Weapons tab (or anything else touching the
+		# "weapons" section) was ever opened before this purchase, that
+		# earlier, weapon-less result stays cached forever -- buying a new
+		# weapon here never told it to go stale. Same "publish but nobody
+		# told the UI to re-observe" shape as the restaurant-fling and
+		# weapon-card bugs already fixed elsewhere in this project. Erase
+		# just the cached "weapons" entry for this actor so the next open of
+		# either surface recomputes fresh from belongings (which, per the
+		# add_item() call just above, already has the new weapon correctly).
+		if (
+			gs.crime_hub_contract_engine != null
+			and typeof(gs.crime_hub_contract_engine.section_surfaces_by_actor) == TYPE_DICTIONARY
+		):
+			var crime_hub_actor_key: String = str(int(gs.player.id))
+			var crime_hub_surfaces: Variant = gs.crime_hub_contract_engine.section_surfaces_by_actor.get(crime_hub_actor_key, null)
+			if typeof(crime_hub_surfaces) == TYPE_DICTIONARY:
+				(crime_hub_surfaces as Dictionary).erase("weapons")
+
 	var memory_text: String = "I bought a %s from %s." % [
 		clean_name,
 		vendor_name

@@ -31,8 +31,8 @@ static func bundle_contract() -> Dictionary:
 			"default": false
 		},
 		"description": (
-			"A hot-swappable prehistoric survival reality "
-			+ "with tribal roles, contribution governance, "
+			"A prehistoric survival experience you can switch in and "
+			+ "out, with tribal roles, contribution governance, "
 			+ "resource economy, megafauna, and its own menu."
 		),
 		"featured": true,
@@ -302,8 +302,8 @@ static func _components() -> Dictionary:
 			"component_id": "presentation",
 			"name": "Prehistoric Presentation",
 			"description": (
-				"Contract-driven labels, navigation, "
-				+ "taxonomy, and palette."
+				"Labels, navigation, naming, and color "
+				+ "palette for this experience."
 			),
 			"providers": [
 				_era_overlay_provider(),
@@ -574,7 +574,7 @@ static func caveman_activity_contracts() -> Array:
 		),
 		_activity_row(
 			"give_resource_item",
-			"Give Resource to Controlled Actor",
+			"Give Resource to Yourself",
 			"runtime_service",
 			"Move one projected resource into personal inventory.",
 			0,
@@ -1200,8 +1200,7 @@ static func _bundle_menu_contract() -> Dictionary:
 		"bundle_id": BUNDLE_ID,
 		"title": "🪨 CAVEMAN MENU",
 		"subtitle": (
-			"The live control surface for this "
-			+ "installed reality."
+			"Manage this installed experience from here."
 		),
 		"default_section": "roles",
 		"section_tabs": [

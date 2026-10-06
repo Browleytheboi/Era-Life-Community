@@ -620,7 +620,7 @@ func emit_reality_surface_contract(
 	if actor == null:
 		return _failure(
 			"missing_actor",
-			"No Caveman reality observer could be resolved."
+			"No one is available to watch the tribe right now."
 		)
 
 	if not bool(
@@ -824,7 +824,7 @@ func perform_activity(
 	if actor == null:
 		return _failure(
 			"missing_actor",
-			"No Caveman activity actor could be resolved."
+			"No one is available to do this activity."
 		)
 
 	if not bool(
@@ -878,7 +878,7 @@ func perform_activity(
 	if tribe.is_empty():
 		return _failure(
 			"missing_tribe",
-			"The actor's tribe could not be resolved."
+			"This person's tribe couldn't be found."
 		)
 
 	var eligibility: Dictionary = _activity_eligibility(
@@ -1221,7 +1221,7 @@ func _activity_eligibility(
 		return {
 			"eligible": false,
 			"reason": "activity_contract_missing",
-			"text": "The Caveman activity contract is missing."
+			"text": "That activity isn't available right now."
 		}
 
 	var minimum_age: int = int(
@@ -1805,7 +1805,7 @@ func assign_role(
 	if actor == null:
 		return _failure(
 			"missing_actor",
-			"No Caveman role actor could be resolved."
+			"No one is available to take this role."
 		)
 
 	if not bool(
@@ -2194,8 +2194,8 @@ func emit_bundle_menu_contract(
 			}
 		],
 		"status_text": (
-			"Reality controls are hot. "
-			+ "Section clicks reveal resident contracts."
+			"Reality controls are live. "
+			+ "Click a section to see what's there."
 		),
 		"truth_state": "authoritative_hot",
 		"authoritative_projection": true,
@@ -3391,10 +3391,10 @@ func _tribe_section_rows(
 					- projected_member_count
 				)
 			),
-			"subtitle": "RESIDENT • NOT IN THIS OBSERVATION QUANTUM",
+			"subtitle": "NOT CURRENTLY SHOWN",
 			"description": (
-				"Additional tribe members remain simulation-resident "
-				+ "and may publish progressively without blocking this lens."
+				"The rest of the tribe is still out there and will "
+				+ "appear here over time."
 			),
 			"enabled": false,
 			"actions": [],

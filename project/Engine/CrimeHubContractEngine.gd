@@ -756,7 +756,13 @@ func _bind_crime_background_event_bus() -> void:
 		"jail_booking_created",
 		"jail_release",
 		"prison_intake_created",
-		"prison_released"
+		"prison_released",
+		# FIX: without this, the crime hub never re-fetches and re-publishes
+		# the incarceration lens on an ordinary yearly tick, so the
+		# guards/inmates screen goes stale (and gets rejected outright by
+		# the relationships freshness gate) the moment a year passes while
+		# someone is serving time.
+		"prison_yearly_tick"
 	]:
 		gs.event_bus.subscribe(
 			event_name,
@@ -6231,9 +6237,9 @@ func _service_resident_heavy_section_projection_queue() -> void:
 		""
 		if not rows.is_empty()
 		else (
-			"No resident weapons are currently available."
+			"You don't own any weapons."
 			if section_id == "weapons"
-			else "No active crime cases are attached to this actor."
+			else "You have no active crime cases."
 		)
 	)
 
@@ -8366,9 +8372,11 @@ func _prison_rows(
 		return [
 			{
 				"kind": "empty_state",
-				"label": "Not incarcerated",
+				"label": "Not in Custody",
 				"subtitle": (
-					"No prison reality is attached to this actor."
+					"You're not currently jailed or imprisoned. "
+					+ "This tab will show your sentence and facility "
+					+ "once you're caught and convicted."
 				)
 			}
 		]

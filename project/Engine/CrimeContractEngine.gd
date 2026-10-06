@@ -66,8 +66,13 @@ func _init(
 ) -> void:
 	gs = _game_state
 
-
-
+	# FIX: active_contract defaults to {} and set_contract() had zero callers
+	# anywhere in the project -- get_case_lifecycle() always returned {},
+	# so validate_transition() always returned valid=false for every status
+	# change, for every case, always. advance_case() silently no-op'd on
+	# every attempt as a result. Confirmed live: a case's status never moved
+	# off "pending" across three separate interrogation stages.
+	set_contract({})
 
 
 
@@ -1761,6 +1766,33 @@ func _service_crime_target_refresh_queue() -> void:
 				false
 			)
 		):
+			# FIX: Brandon reported every single target on the Targets tab
+			# showing "NOT AVAILABLE - Lives in another nation" -- not some,
+			# all of them. Traced it here: this loop picks random strangers
+			# from the ENTIRE ambient population (gs.npcs, now ~6,800
+			# people spread across every era birth location since the
+			# "find a date" population fix) with zero geography awareness.
+			# physical_crime_target_access_contract() below only checks
+			# same-country/same-realm at DISPLAY time, after a candidate is
+			# already picked -- with a population this geographically
+			# scattered, nearly every randomly-picked stranger fails that
+			# check, so the tab fills with people who were never going to
+			# be selectable in the first place. Moving the same check to
+			# selection time so the random pool only ever contains people
+			# actually reachable, instead of filtering them out after the
+			# fact and leaving the tab empty-looking.
+			if not bool(
+				physical_crime_target_access_contract(
+					actor,
+					int(target.realm_id),
+					str(target.home_country)
+				).get(
+					"allowed",
+					true
+				)
+			):
+				continue
+
 			var random_material: String = (
 				"%d:%d:%d:%d"
 				% [
@@ -3083,13 +3115,13 @@ func _commit_targeted_crime_action(
 	if target == null:
 		return _failure(
 			"crime_target_unavailable",
-			"The selected target is no longer resident."
+			"That target isn't here anymore."
 		)
 
 	if int(target.id) == int(actor.id):
 		return _failure(
 			"self_target_not_supported",
-			"This crime action cannot target its actor."
+			"You can't target yourself with this."
 		)
 
 	# Per-action minimum. Hub access alone is 8; murder and assault are far more
@@ -3143,7 +3175,7 @@ func _commit_targeted_crime_action(
 	):
 		return _failure(
 			"crime_target_outside_custody_reality",
-			"The selected person is not resident in this facility."
+			"That person isn't in this facility."
 		)
 
 	var crime_action_id: String = str(
@@ -3499,7 +3531,7 @@ func begin_weapon_action(
 	):
 		return _failure(
 			"crime_hub_access_unavailable",
-			"This actor cannot currently open the Crime Hub."
+			"You can't open the Crime Hub right now."
 		)
 
 	var source_item: Dictionary = _safe_dictionary(
@@ -3591,7 +3623,7 @@ func begin_weapon_action(
 		return _failure(
 			"weapon_contract_unavailable",
 			(
-				"No runtime weapon contract exists for %s."
+				"No weapon is available for %s."
 				% weapon_name
 			)
 		)
@@ -3713,10 +3745,10 @@ func begin_weapon_action(
 	if target_rows.is_empty():
 		target_rows.append({
 			"kind": "crime_target_stream_status",
-			"label": "Targets are streaming into this reality…",
+			"label": "Targets are still loading…",
 			"subtitle": (
-				"CrimeTarget residency is still publishing. "
-				+ "The UI remains fully interactive."
+				"More targets may appear shortly. "
+				+ "You can keep using the screen while you wait."
 			),
 			"actions": []
 		})
@@ -3921,7 +3953,7 @@ func choose_weapon_target(
 	):
 		return _failure(
 			"self_target_not_supported",
-			"This crime action cannot target its actor."
+			"You can't target yourself with this."
 		)
 
 	var custody_access: Dictionary = (
@@ -3949,7 +3981,7 @@ func choose_weapon_target(
 	):
 		return _failure(
 			"crime_target_outside_custody_reality",
-			"The selected person is not resident in this facility."
+			"That person isn't in this facility."
 		)
 
 	var physical_access: Dictionary = (
@@ -4192,13 +4224,13 @@ func commit_weapon_action(
 	if target == null:
 		return _failure(
 			"weapon_target_unavailable",
-			"The selected target is no longer resident."
+			"That target isn't here anymore."
 		)
 
 	if int(target.id) == int(actor.id):
 		return _failure(
 			"self_target_not_supported",
-			"This crime action cannot target its actor."
+			"You can't target yourself with this."
 		)
 
 	var custody_access: Dictionary = (
@@ -4224,7 +4256,7 @@ func commit_weapon_action(
 	):
 		return _failure(
 			"crime_target_outside_custody_reality",
-			"The selected person is not resident in this facility."
+			"That person isn't in this facility."
 		)
 
 	var physical_access: Dictionary = (
@@ -4270,7 +4302,7 @@ func commit_weapon_action(
 	):
 		return _failure(
 			"missing_weapon_runtime_contract",
-			"The weapon runtime contract is incomplete."
+			"That weapon isn't set up right."
 		)
 
 	var body_parts_raw: Variant = action_contract.get(
@@ -4744,7 +4776,7 @@ func _failure(
 		"success": false,
 		"reason": reason,
 		"text": message,
-		"popup_title": "Crime Contract",
+		"popup_title": "Crime",
 		"popup_text": message,
 		"popup_footer": "Tap anywhere to continue.",
 	}

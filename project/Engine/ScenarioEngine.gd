@@ -56,11 +56,11 @@ func queue_data_driven_scenario(scenario_id: String, actor: Person = null) -> Di
 		return { "success": false, "text": "The data-driven scenario registry is unavailable."}
 
 	if not gs.simulation_contract_engine.has_method("build_scenario_dictionary"):
-		return { "success": false, "text": "The simulation contract engine cannot build scenario dictionaries."}
+		return { "success": false, "text": "This scenario couldn't be set up right now."}
 
 	var scenario: Dictionary = gs.simulation_contract_engine.build_scenario_dictionary(scenario_id)
 	if scenario.is_empty():
-		return { "success": false, "text": "No scenario contract exists for %s." % scenario_id}
+		return { "success": false, "text": "No scenario called %s exists." % scenario_id}
 
 	if actor == null:
 		actor = gs.player

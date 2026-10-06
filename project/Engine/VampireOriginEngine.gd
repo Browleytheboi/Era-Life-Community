@@ -71,7 +71,7 @@ func resolve_intent(
 						"reason": "vampire_target_missing",
 						"popup_title": "Vampire Unavailable",
 						"popup_text": (
-							"That vampire is no longer observable."
+							"That vampire is no longer available."
 						),
 						"popup_footer": "Choose another vampire."
 					}
@@ -219,7 +219,7 @@ func ask_to_be_turned(
 			"reason": "missing_requesting_actor",
 			"text": "Nobody could make the request.",
 			"popup_title": "Vampire Request",
-			"popup_text": "No living actor could make this request.",
+			"popup_text": "No one living could make this request.",
 			"popup_footer": "Nothing was changed."
 		}
 

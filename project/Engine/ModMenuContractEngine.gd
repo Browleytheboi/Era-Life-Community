@@ -79,7 +79,7 @@ func resolve_intent(
 						"status_text": str(
 							payload.get(
 								"status_text",
-								"Mod reality is becoming observable."
+								"Loading mods..."
 							)
 						)
 					}

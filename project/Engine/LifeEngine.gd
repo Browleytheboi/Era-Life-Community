@@ -4964,6 +4964,16 @@ func _ensure_age_up_time_truth_committed(
 
 	return out
 func _build_year_resolution_popup_chain(final_followup: Dictionary = {}) -> Dictionary:
+	# DIAGNOSTIC: confirms this drain function is actually reached, and from
+	# where -- pairs with ERALIFE_YEAR_POPUP_QUEUED in GameState.gd. If a
+	# release fires QUEUED but this never fires, the queue is never drained.
+	EraLog.truth(
+		"ERALIFE_YEAR_POPUP_DRAIN_ENTRY|queue_depth_before=%d"
+		% [
+			int(gs.pending_year_resolution_popups.size()) if gs != null else -1
+		]
+	)
+
 	var chained_result: Dictionary = {}
 
 	if typeof(final_followup) == TYPE_DICTIONARY and not final_followup.is_empty():
@@ -4989,6 +4999,14 @@ func _build_year_resolution_popup_chain(final_followup: Dictionary = {}) -> Dict
 	for i in range(queued_popups.size() - 1, -1, -1):
 		var popup_result: Dictionary = queued_popups [i].duplicate(true)
 		chained_result = _append_result_to_followup_tail(popup_result, chained_result)
+
+	EraLog.truth(
+		"ERALIFE_YEAR_POPUP_DRAIN_RESULT|popups_drained=%d|chained_popup_text=%s"
+		% [
+			queued_popups.size(),
+			str(chained_result.get("popup_text", ""))
+		]
+	)
 
 	return chained_result
 
@@ -5026,12 +5044,20 @@ func _resolve_current_year_after_tick() -> Dictionary:
 	var zero_frame_raw: Variant = gs.scenario_state.get("zero_frame_age_up_last_result", {})
 	var zero_frame_result: Dictionary = zero_frame_raw if typeof(zero_frame_raw) == TYPE_DICTIONARY else {}
 	if bool(zero_frame_result.get("zero_frame_age_up", false)):
+		# FIX: zero-frame age-ups returned here before ever draining
+		# pending_year_resolution_popups, so queued popups (e.g. prison release)
+		# were written by the engine but never surfaced to the player. The
+		# non-zero-frame paths below already route through
+		# _build_year_resolution_popup_chain() for the same reason.
+		var zero_frame_display_result: Dictionary = _build_year_resolution_popup_chain(zero_frame_result)
+		if zero_frame_display_result.is_empty():
+			zero_frame_display_result = zero_frame_result.duplicate(true)
 		gs.scenario_state ["year_in_progress"] = false
 		gs.scenario_state ["bundle_built"] = false
 		gs.scenario_state ["runtime_prepared_scenario_setup"] = {}
 		gs.scenario_state ["runtime_slice_guard"] = {}
-		gs.scenario_state ["last_resolved_age_up_result"] = zero_frame_result.duplicate(true)
-		return zero_frame_result.duplicate(true)
+		gs.scenario_state ["last_resolved_age_up_result"] = zero_frame_display_result.duplicate(true)
+		return zero_frame_display_result.duplicate(true)
 
 	var stored_result_raw: Variant = gs.scenario_state.get("post_runtime_result", {})
 	var stored_result: Dictionary = stored_result_raw if typeof(stored_result_raw) == TYPE_DICTIONARY else {}

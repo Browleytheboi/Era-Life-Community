@@ -300,6 +300,28 @@ func serialize_to_payload(
 	_apply_preserved_unknown_slices_to_payload(
 		payload
 	)
+
+	# DIAGNOSTIC: prison/jail/case_orchestrator state never shows up on load.
+	# Report whether it ever made it into the payload on the write side, at
+	# the last possible moment before the file actually gets written.
+	EraLog.truth(
+		"ERALIFE_SAVE_PAYLOAD_CHECK|write_structured_slices=%s|has_jail=%s|has_prison=%s|has_case_orchestrator=%s|slices_dict_has_jail=%s|slices_dict_has_prison=%s"
+		% [
+			str(write_structured_slices),
+			str(payload.has("jail_engine_state")),
+			str(payload.has("prison_engine_state")),
+			str(payload.has("case_orchestrator_state")),
+			str(
+				typeof(payload.get("slices", {})) == TYPE_DICTIONARY
+				and (payload.get("slices", {}) as Dictionary).has("jail_engine_state")
+			),
+			str(
+				typeof(payload.get("slices", {})) == TYPE_DICTIONARY
+				and (payload.get("slices", {}) as Dictionary).has("prison_engine_state")
+			)
+		]
+	)
+
 	payload ["life_packet"] = (
 		_build_life_packet_for_payload(
 			payload,
@@ -792,6 +814,15 @@ func _collect_engine_registry_sections() -> Dictionary:
 
 	if gs.heirloom_engine != null and typeof(gs.heirloom_engine.heirlooms) == TYPE_DICTIONARY:
 		registry ["heirlooms"] = gs.heirloom_engine.heirlooms.duplicate(true)
+
+	if gs.jail_engine != null:
+		registry ["jail_engine_state"] = gs.jail_engine.export_state()
+
+	if gs.prison_engine != null:
+		registry ["prison_engine_state"] = gs.prison_engine.export_state()
+
+	if gs.case_orchestrator != null:
+		registry ["case_orchestrator_state"] = gs.case_orchestrator.export_state()
 
 	EraLog.truth(
 		"ERALIFE_REGISTRY_COLLECTED|keys=%d|vehicles=%s|belongings=%s|properties=%s|heirlooms=%s"
