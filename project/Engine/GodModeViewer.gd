@@ -3213,6 +3213,45 @@ func _apply_mode_constraints(mode: String) -> void:
 
 		check.set_pressed_no_signal(enabled)
 
+	# FIX: Brandon found "Bending Type" (with "Avatar" selectable) and the
+	# "Infinity Stones" selector still fully usable while REALISTIC
+	# ("Grounded only") was selected. This loop already correctly
+	# disables the "Bending"/"Artifacts"/etc. checkboxes further down the
+	# form in Realistic mode, but bending_type_picker and
+	# infinity_stone_buttons are separate controls built earlier
+	# (_build()/_build_infinity_stone_selector()) that were never wired to
+	# mode at all -- so a Realistic start could still walk away with an
+	# Avatar bending type or 2 Infinity Stones regardless of what the
+	# feature checkboxes said. Force them back to "off" and lock them
+	# whenever fantastical content isn't allowed in the selected mode.
+	var fantastical_locked: bool = clean_mode in ["realistic"]
+
+	if (
+		bending_type_picker != null
+		and is_instance_valid(bending_type_picker)
+	):
+		if fantastical_locked:
+			for index in range(bending_type_picker.item_count):
+				if str(bending_type_picker.get_item_text(index)).strip_edges().to_lower() == "none":
+					bending_type_picker.select(index)
+					break
+
+		bending_type_picker.disabled = fantastical_locked
+
+	if fantastical_locked and starting_infinity_stones != 0:
+		starting_infinity_stones = 0
+
+	for raw_button in infinity_stone_buttons:
+		var stone_button: Button = raw_button as Button
+		if stone_button == null or not is_instance_valid(stone_button):
+			continue
+
+		var stone_count: int = int(stone_button.get_meta("god_mode_infinity_stone_count", 0))
+		stone_button.disabled = fantastical_locked and stone_count != 0
+
+	if not infinity_stone_buttons.is_empty():
+		_style_infinity_stone_buttons()
+
 	sync_guard = previous_guard
 	selected_reality_mode = clean_mode
 

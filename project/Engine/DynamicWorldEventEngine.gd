@@ -164,6 +164,13 @@ func _bending_events():
 	if gs == null:
 		return
 
+	# FIX: defense-in-depth alongside the GameState/BendingEngine reality-mode
+	# fixes -- this function had no is_feature_enabled("bending") check of
+	# its own, so it would push Avatar-reaction world news even in Realistic
+	# mode if an avatar-type character ever existed.
+	if gs.has_method("is_feature_enabled") and not gs.is_feature_enabled("bending"):
+		return
+
 	var avatar_exists: bool = false
 
 	if (

@@ -1980,6 +1980,19 @@ func _ensure_bending_world_bootstrap(options: Dictionary = {}) -> void:
 	if gs == null:
 		return
 
+	# FIX: a playtester reported pre-birth world history ("Omari Baty won
+	# the Youth Bending World Championship") still appearing in Realistic
+	# mode, even though normal post-birth play correctly shows no bending
+	# content. Traced it here -- this bootstrap (and
+	# _seed_lightweight_opening_bending_history() below it, which fabricates
+	# ~16 years x 4 divisions of fake pre-birth tournament history and pushes
+	# it to the world feed) never checked is_feature_enabled("bending") at
+	# all, unlike the ongoing yearly paths which do. Bail out before
+	# fabricating or re-seeding any of that history when bending isn't
+	# allowed in this reality.
+	if gs.has_method("is_feature_enabled") and not gs.is_feature_enabled("bending"):
+		return
+
 	var state: Dictionary = _bending_world_state()
 	if bool(state.get("bootstrap_seeded", false)):
 		var existing_history: Array = state.get("tournament_history", []) if typeof(state.get("tournament_history", [])) == TYPE_ARRAY else []

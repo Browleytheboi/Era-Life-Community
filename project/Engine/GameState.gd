@@ -12075,6 +12075,30 @@ func _birth_shell_next_unresolved_deferred_boot_stage_index(stages: Array, compl
 
 
 func _execute_birth_shell_deferred_boot_stage(stage_name: String, mode_key: String, runtime_owner: String) -> Dictionary:
+	# FIX: Brandon reported bending showing up in worlds started in
+	# Realistic mode. is_feature_enabled("bending") already correctly
+	# returns false for REALITY_REALISTIC, and
+	# _birth_shell_default_visibility_state_for_stage() already hides this
+	# stage's loading-screen label in that mode -- but hiding the label
+	# never stopped the stage itself from running. This dispatcher executed
+	# "bending_population_backfill" (and the sibling power/superhero/
+	# artifact/wizard/realm population backfills) completely
+	# unconditionally, seeding the ambient population with fantastical NPCs
+	# in every reality mode, Realistic included.
+	if (
+		mode_key == REALITY_REALISTIC
+		and stage_name in [
+			"bending_population_backfill",
+			"power_population_backfill",
+			"superhero_population_backfill",
+			"wizard_lineage_backfill",
+			"realm_population_backfill",
+			"realm_backfill",
+			"artifact_seed_backfill"
+		]
+	):
+		return {}
+
 	match stage_name:
 		"contract_boot":
 			if game_state_contract_engine == null:
